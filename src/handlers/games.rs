@@ -1428,7 +1428,9 @@ fn validate_json_possession(team_stats: &serde_json::Value, team: &str) -> Resul
         None | Some(serde_json::Value::Null) => Ok(()),
         Some(value) => {
             let percentage = value.as_f64().ok_or_else(|| {
-                AppError::invalid_data(format!("{team} possession must be a number or null"))
+                AppError::invalid_data(format!(
+                    "{team} possession must be a number or null"
+                ))
             })?;
             validate_possession(Some(percentage), team)
         }
@@ -1526,10 +1528,18 @@ mod possession_validation_tests {
 
     #[test]
     fn bulk_possession_must_be_numeric_or_null() {
-        assert!(validate_json_possession(&serde_json::json!({"possession": 53}), "Home").is_ok());
-        assert!(validate_json_possession(&serde_json::json!({"possession": null}), "Away").is_ok());
-        assert!(validate_json_possession(&serde_json::json!({"possession": "53%"}), "Home").is_err());
-        assert!(validate_json_possession(&serde_json::json!({"possession": 101}), "Away").is_err());
+        assert!(
+            validate_json_possession(&serde_json::json!({"possession": 53}), "Home").is_ok()
+        );
+        assert!(
+            validate_json_possession(&serde_json::json!({"possession": null}), "Away").is_ok()
+        );
+        assert!(
+            validate_json_possession(&serde_json::json!({"possession": "53%"}), "Home").is_err()
+        );
+        assert!(
+            validate_json_possession(&serde_json::json!({"possession": 101}), "Away").is_err()
+        );
     }
 }
 
@@ -1617,8 +1627,9 @@ pub async fn bulk_update_statistics(
     for snapshot in snapshots {
         let minute = snapshot["minute"]
             .as_i64()
-            .ok_or_else(|| AppError::invalid_data("Each snapshot must include an integer minute"))?
-            as i32;
+            .ok_or_else(|| {
+                AppError::invalid_data("Each snapshot must include an integer minute")
+            })? as i32;
         let stats = snapshot
             .get("statistics")
             .ok_or_else(|| AppError::invalid_data("Each snapshot must include statistics"))?;
@@ -1643,8 +1654,9 @@ pub async fn bulk_update_statistics(
     let last_minute = snapshots
         .last()
         .and_then(|s| s["minute"].as_i64())
-        .ok_or_else(|| AppError::invalid_data("The snapshots array must not be empty"))?
-        as i32;
+        .ok_or_else(|| {
+            AppError::invalid_data("The snapshots array must not be empty")
+        })? as i32;
 
     let latest_statistics = snapshots
         .last()
