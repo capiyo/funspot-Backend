@@ -1460,7 +1460,7 @@ async fn broadcast_statistics_update(
             return 0;
         }
     };
-    let mut delivered_to_rooms = 0;
+    let mut rooms_targeted = 0;
 
     loop {
         match cursor.advance().await {
@@ -1501,10 +1501,10 @@ async fn broadcast_statistics_update(
             }),
         )
         .await;
-        delivered_to_rooms += 1;
+        rooms_targeted += 1;
     }
 
-    delivered_to_rooms
+    rooms_targeted
 }
 
 #[cfg(test)]
@@ -1600,7 +1600,7 @@ pub async fn add_statistics_snapshot(
     )
     .await?;
 
-    let broadcast_rooms =
+    let rooms_targeted =
         broadcast_statistics_update(&state, &payload.fixture_id, payload.minute, statistics).await;
 
     Ok(Json(json!({
@@ -1608,7 +1608,7 @@ pub async fn add_statistics_snapshot(
         "fixture_id": payload.fixture_id,
         "source_collection": source.collection_name(),
         "minute": payload.minute,
-        "broadcast_rooms": broadcast_rooms,
+        "rooms_targeted": rooms_targeted,
     })))
 }
 
@@ -1685,7 +1685,7 @@ pub async fn bulk_update_statistics(
     )
     .await?;
 
-    let broadcast_rooms =
+    let rooms_targeted =
         broadcast_statistics_update(&state, fixture_id, last_minute, latest_statistics).await;
 
     Ok(Json(json!({
@@ -1693,7 +1693,7 @@ pub async fn bulk_update_statistics(
         "fixture_id": fixture_id,
         "source_collection": source.collection_name(),
         "count": snapshots.len(),
-        "broadcast_rooms": broadcast_rooms,
+        "rooms_targeted": rooms_targeted,
     })))
 }
 
