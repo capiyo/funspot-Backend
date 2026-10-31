@@ -1300,7 +1300,7 @@ pub async fn create_default_markets_for_match(
 ) -> Result<usize, AppError> {
     let markets_col: Collection<SubFixtureMarket> = state.db.collection("sub_fixture_markets");
 
-    const DEFAULT_MARKET_TYPES: [&str; 3] = ["first_goal", "first_card", "first_corner"];
+    const DEFAULT_MARKET_TYPES: [&str; 4] = ["first_goal", "first_card", "first_corner", "possession"];
     let options = vec!["home".to_string(), "away".to_string()];
 
     let mut created = 0;
