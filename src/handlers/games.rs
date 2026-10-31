@@ -1322,6 +1322,9 @@ fn lineup_doc_to_json(doc: &LineupsDocument) -> serde_json::Value {
             "number": p.jersey_number,
             "position": p.position,
             "captain": p.captain,
+            "rating": p.rating,
+            "imageUrl": p.image_url,
+            "playerId": p.player_id,
         })).collect::<Vec<_>>(),
         "home_bench": doc.home_lineup.bench.iter().map(|p| json!({
             "name": p.name,
@@ -1354,6 +1357,9 @@ fn lineup_doc_to_json_simplified(doc: &LineupsDocument) -> serde_json::Value {
                 "name": p.name,
                 "number": p.jersey_number,
                 "position": p.position,
+                "rating": p.rating,
+                "imageUrl": p.image_url,
+                "playerId": p.player_id,
             })).collect::<Vec<_>>(),
         },
         "away": {
