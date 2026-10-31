@@ -1,0 +1,21 @@
+pub(crate) mod archive;
+//pub(crate) mod auth;
+pub mod actions;
+pub mod auth;
+pub(crate) mod channel;
+pub(crate) mod chat;
+pub(crate) mod comrade_route;
+pub(crate) mod games;
+pub(crate) mod mpesa;
+pub(crate) mod pledges;
+pub(crate) mod posts;
+pub(crate) mod sub_fixture_routes;
+pub(crate) mod user_profile;
+pub(crate) mod visibility;
+pub(crate) mod comments_routes;
+pub(crate) mod notification;
+
+
+// pub mod auth;  // Remove or comment out if not needed
+
+// Re-export all public functions
