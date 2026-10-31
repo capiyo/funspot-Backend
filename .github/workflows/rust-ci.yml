@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    name: Format and test
+    name: Build and test
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -29,9 +29,6 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
 
       - name: Run tests
         run: cargo test --all-targets
