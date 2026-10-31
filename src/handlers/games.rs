@@ -13,7 +13,7 @@ use tracing;
 
 use crate::errors::{AppError, Result};
 use crate::handlers::ws_handler::broadcast_live_match_update;
-use crate::models::channel::Vote;
+use crate::models::channel::{ChannelFixture, Vote};
 use crate::models::game::{
     Coach, CommentaryEntry, Game, GameQuery, HistoryGame, LineupsDocument, LiveGameUpdate,
     MatchStatistics, Player, StatisticsSnapshot, TeamLineup, TeamStatistics, Voter,
@@ -1412,6 +1412,137 @@ fn team_stats_from_payload(p: TeamStatisticsPayload) -> TeamStatistics {
     }
 }
 
+fn validate_possession(value: Option<f64>, team: &str) -> Result<()> {
+    if let Some(value) = value {
+        if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+            return Err(AppError::invalid_data(format!(
+                "{team} possession must be a finite percentage between 0 and 100"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_json_possession(team_stats: &serde_json::Value, team: &str) -> Result<()> {
+    match team_stats.get("possession") {
+        None | Some(serde_json::Value::Null) => Ok(()),
+        Some(value) => {
+            let percentage = value.as_f64().ok_or_else(|| {
+                AppError::invalid_data(format!(
+                    "{team} possession must be a number or null"
+                ))
+            })?;
+            validate_possession(Some(percentage), team)
+        }
+    }
+}
+
+/// Publish a persisted statistics snapshot to every channel room associated
+/// with the fixture. The database write always happens before this fan-out.
+async fn broadcast_statistics_update(
+    state: &AppState,
+    fixture_id: &str,
+    minute: i32,
+    statistics: serde_json::Value,
+) -> usize {
+    let channel_fixtures: Collection<ChannelFixture> = state.db.collection("channel_fixtures");
+    let mut cursor = match channel_fixtures
+        .find(doc! { "fixture_id": fixture_id })
+        .await
+    {
+        Ok(cursor) => cursor,
+        Err(error) => {
+            tracing::error!(
+                "Could not load channel rooms for statistics broadcast on fixture {}: {}",
+                fixture_id,
+                error
+            );
+            return 0;
+        }
+    };
+    let mut rooms_targeted = 0;
+
+    loop {
+        match cursor.advance().await {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(error) => {
+                tracing::error!(
+                    "Could not continue channel-room lookup for fixture {}: {}",
+                    fixture_id,
+                    error
+                );
+                break;
+            }
+        }
+
+        let channel_fixture = match cursor.deserialize_current() {
+            Ok(channel_fixture) => channel_fixture,
+            Err(error) => {
+                tracing::warn!(
+                    "Skipping malformed channel-fixture mapping for {}: {}",
+                    fixture_id,
+                    error
+                );
+                continue;
+            }
+        };
+
+        broadcast_live_match_update(
+            state,
+            &channel_fixture.channel_id,
+            fixture_id,
+            "statistics.updated",
+            json!({
+                "fixture_id": fixture_id,
+                "channel_id": channel_fixture.channel_id,
+                "minute": minute,
+                "statistics": statistics,
+            }),
+        )
+        .await;
+        rooms_targeted += 1;
+    }
+
+    rooms_targeted
+}
+
+#[cfg(test)]
+mod possession_validation_tests {
+    use super::{validate_json_possession, validate_possession};
+
+    #[test]
+    fn accepts_missing_and_boundary_possession_values() {
+        assert!(validate_possession(None, "Home").is_ok());
+        assert!(validate_possession(Some(0.0), "Home").is_ok());
+        assert!(validate_possession(Some(100.0), "Away").is_ok());
+    }
+
+    #[test]
+    fn rejects_out_of_range_and_non_finite_possession_values() {
+        assert!(validate_possession(Some(-0.1), "Home").is_err());
+        assert!(validate_possession(Some(100.1), "Away").is_err());
+        assert!(validate_possession(Some(f64::NAN), "Home").is_err());
+        assert!(validate_possession(Some(f64::INFINITY), "Away").is_err());
+    }
+
+    #[test]
+    fn bulk_possession_must_be_numeric_or_null() {
+        assert!(
+            validate_json_possession(&serde_json::json!({"possession": 53}), "Home").is_ok()
+        );
+        assert!(
+            validate_json_possession(&serde_json::json!({"possession": null}), "Away").is_ok()
+        );
+        assert!(
+            validate_json_possession(&serde_json::json!({"possession": "53%"}), "Home").is_err()
+        );
+        assert!(
+            validate_json_possession(&serde_json::json!({"possession": 101}), "Away").is_err()
+        );
+    }
+}
+
 fn team_stats_from_json(s: &serde_json::Value) -> TeamStatistics {
     TeamStatistics {
         possession: s["possession"].as_f64(),
@@ -1434,6 +1565,9 @@ pub async fn add_statistics_snapshot(
 ) -> Result<Json<serde_json::Value>> {
     tracing::info!("📊 Adding statistics snapshot for {}", payload.fixture_id);
 
+    validate_possession(payload.statistics.home.possession, "Home")?;
+    validate_possession(payload.statistics.away.possession, "Away")?;
+
     let snapshot = StatisticsSnapshot {
         minute: payload.minute,
         statistics: MatchStatistics {
@@ -1445,6 +1579,12 @@ pub async fn add_statistics_snapshot(
 
     let bson_snapshot = bson::to_bson(&snapshot).map_err(|e| {
         AppError::InternalServerError(format!("Failed to serialize statistics: {}", e))
+    })?;
+    let statistics = serde_json::to_value(&snapshot.statistics).map_err(|e| {
+        AppError::InternalServerError(format!(
+            "Failed to serialize statistics for broadcast: {}",
+            e
+        ))
     })?;
 
     let source = update_one_in_either(
@@ -1460,11 +1600,15 @@ pub async fn add_statistics_snapshot(
     )
     .await?;
 
+    let rooms_targeted =
+        broadcast_statistics_update(&state, &payload.fixture_id, payload.minute, statistics).await;
+
     Ok(Json(json!({
         "success": true,
         "fixture_id": payload.fixture_id,
         "source_collection": source.collection_name(),
         "minute": payload.minute,
+        "rooms_targeted": rooms_targeted,
     })))
 }
 
@@ -1482,10 +1626,30 @@ pub async fn bulk_update_statistics(
         .as_array()
         .ok_or_else(|| AppError::invalid_data("Missing snapshots array"))?;
 
-    let mut bson_snapshots = Vec::new();
+    if snapshots.is_empty() {
+        return Err(AppError::invalid_data("The snapshots array must not be empty"));
+    }
+    let snapshot_count = snapshots.len();
+    let last_minute = snapshots
+        .last()
+        .and_then(|snapshot| snapshot["minute"].as_i64())
+        .ok_or_else(|| {
+            AppError::invalid_data("The latest snapshot must include an integer minute")
+        })? as i32;
+
+    let mut bson_snapshots = Vec::with_capacity(snapshot_count);
+    let mut latest_statistics_snapshot: Option<MatchStatistics> = None;
     for snapshot in snapshots {
-        let minute = snapshot["minute"].as_i64().unwrap_or(0) as i32;
-        let stats = &snapshot["statistics"];
+        let minute = snapshot["minute"]
+            .as_i64()
+            .ok_or_else(|| {
+                AppError::invalid_data("Each snapshot must include an integer minute")
+            })? as i32;
+        let stats = snapshot
+            .get("statistics")
+            .ok_or_else(|| AppError::invalid_data("Each snapshot must include statistics"))?;
+        validate_json_possession(&stats["home"], "Home")?;
+        validate_json_possession(&stats["away"], "Away")?;
 
         let s = StatisticsSnapshot {
             minute,
@@ -1495,6 +1659,7 @@ pub async fn bulk_update_statistics(
             },
             timestamp: BsonDateTime::from_chrono(Utc::now()),
         };
+        latest_statistics_snapshot = Some(s.statistics.clone());
 
         let bson_s = bson::to_bson(&s).map_err(|e| {
             AppError::InternalServerError(format!("Failed to serialize statistics: {}", e))
@@ -1502,10 +1667,14 @@ pub async fn bulk_update_statistics(
         bson_snapshots.push(bson_s);
     }
 
-    let last_minute = snapshots
-        .last()
-        .and_then(|s| s["minute"].as_i64())
-        .unwrap_or(0) as i32;
+    let latest_statistics = latest_statistics_snapshot
+        .ok_or_else(|| AppError::invalid_data("The snapshots array must not be empty"))?;
+    let latest_statistics = serde_json::to_value(&latest_statistics).map_err(|e| {
+        AppError::InternalServerError(format!(
+            "Failed to serialize latest statistics for broadcast: {}",
+            e
+        ))
+    })?;
 
     let source = update_one_in_either(
         &state,
@@ -1520,11 +1689,15 @@ pub async fn bulk_update_statistics(
     )
     .await?;
 
+    let rooms_targeted =
+        broadcast_statistics_update(&state, fixture_id, last_minute, latest_statistics).await;
+
     Ok(Json(json!({
         "success": true,
         "fixture_id": fixture_id,
         "source_collection": source.collection_name(),
-        "count": snapshots.len(),
+        "count": snapshot_count,
+        "rooms_targeted": rooms_targeted,
     })))
 }
 
@@ -1554,8 +1727,8 @@ pub async fn get_latest_statistics(
 
     if let Some(latest) = game.statistics.last() {
         Ok(Json(json!({
-            "ball_possession_home": latest.statistics.home.possession.unwrap_or(0.0),
-            "ball_possession_away": latest.statistics.away.possession.unwrap_or(0.0),
+            "ball_possession_home": latest.statistics.home.possession,
+            "ball_possession_away": latest.statistics.away.possession,
             "total_shots_home": latest.statistics.home.shots.unwrap_or(0),
             "total_shots_away": latest.statistics.away.shots.unwrap_or(0),
             "shots_on_target_home": latest.statistics.home.shots_on_target.unwrap_or(0),
@@ -1580,8 +1753,8 @@ pub async fn get_latest_statistics(
         })))
     } else {
         Ok(Json(json!({
-            "ball_possession_home": 0.0,
-            "ball_possession_away": 0.0,
+            "ball_possession_home": null,
+            "ball_possession_away": null,
             "total_shots_home": 0,
             "total_shots_away": 0,
             "shots_on_target_home": 0,
