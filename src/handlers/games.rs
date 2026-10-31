@@ -1580,6 +1580,12 @@ pub async fn add_statistics_snapshot(
     let bson_snapshot = bson::to_bson(&snapshot).map_err(|e| {
         AppError::InternalServerError(format!("Failed to serialize statistics: {}", e))
     })?;
+    let statistics = serde_json::to_value(&snapshot.statistics).map_err(|e| {
+        AppError::InternalServerError(format!(
+            "Failed to serialize statistics for broadcast: {}",
+            e
+        ))
+    })?;
 
     let source = update_one_in_either(
         &state,
@@ -1594,9 +1600,6 @@ pub async fn add_statistics_snapshot(
     )
     .await?;
 
-    let statistics = serde_json::to_value(&snapshot.statistics).map_err(|e| {
-        AppError::InternalServerError(format!("Failed to serialize statistics for broadcast: {}", e))
-    })?;
     let broadcast_rooms =
         broadcast_statistics_update(&state, &payload.fixture_id, payload.minute, statistics).await;
 
@@ -1624,6 +1627,7 @@ pub async fn bulk_update_statistics(
         .ok_or_else(|| AppError::invalid_data("Missing snapshots array"))?;
 
     let mut bson_snapshots = Vec::new();
+    let mut latest_statistics_snapshot: Option<MatchStatistics> = None;
     for snapshot in snapshots {
         let minute = snapshot["minute"]
             .as_i64()
@@ -1644,6 +1648,7 @@ pub async fn bulk_update_statistics(
             },
             timestamp: BsonDateTime::from_chrono(Utc::now()),
         };
+        latest_statistics_snapshot = Some(s.statistics.clone());
 
         let bson_s = bson::to_bson(&s).map_err(|e| {
             AppError::InternalServerError(format!("Failed to serialize statistics: {}", e))
@@ -1658,14 +1663,14 @@ pub async fn bulk_update_statistics(
             AppError::invalid_data("The snapshots array must not be empty")
         })? as i32;
 
-    let latest_statistics = snapshots
-        .last()
-        .and_then(|snapshot| snapshot.get("statistics"))
-        .map(|statistics| serde_json::json!({
-            "home": statistics["home"],
-            "away": statistics["away"],
-        }))
-        .ok_or_else(|| AppError::invalid_data("The latest snapshot must include statistics"))?;
+    let latest_statistics = latest_statistics_snapshot
+        .ok_or_else(|| AppError::invalid_data("The snapshots array must not be empty"))?;
+    let latest_statistics = serde_json::to_value(&latest_statistics).map_err(|e| {
+        AppError::InternalServerError(format!(
+            "Failed to serialize latest statistics for broadcast: {}",
+            e
+        ))
+    })?;
 
     let source = update_one_in_either(
         &state,
