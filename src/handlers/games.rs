@@ -1626,7 +1626,18 @@ pub async fn bulk_update_statistics(
         .as_array()
         .ok_or_else(|| AppError::invalid_data("Missing snapshots array"))?;
 
-    let mut bson_snapshots = Vec::new();
+    if snapshots.is_empty() {
+        return Err(AppError::invalid_data("The snapshots array must not be empty"));
+    }
+    let snapshot_count = snapshots.len();
+    let last_minute = snapshots
+        .last()
+        .and_then(|snapshot| snapshot["minute"].as_i64())
+        .ok_or_else(|| {
+            AppError::invalid_data("The latest snapshot must include an integer minute")
+        })? as i32;
+
+    let mut bson_snapshots = Vec::with_capacity(snapshot_count);
     let mut latest_statistics_snapshot: Option<MatchStatistics> = None;
     for snapshot in snapshots {
         let minute = snapshot["minute"]
@@ -1655,13 +1666,6 @@ pub async fn bulk_update_statistics(
         })?;
         bson_snapshots.push(bson_s);
     }
-
-    let last_minute = snapshots
-        .last()
-        .and_then(|s| s["minute"].as_i64())
-        .ok_or_else(|| {
-            AppError::invalid_data("The snapshots array must not be empty")
-        })? as i32;
 
     let latest_statistics = latest_statistics_snapshot
         .ok_or_else(|| AppError::invalid_data("The snapshots array must not be empty"))?;
@@ -1692,7 +1696,7 @@ pub async fn bulk_update_statistics(
         "success": true,
         "fixture_id": fixture_id,
         "source_collection": source.collection_name(),
-        "count": snapshots.len(),
+        "count": snapshot_count,
         "rooms_targeted": rooms_targeted,
     })))
 }
