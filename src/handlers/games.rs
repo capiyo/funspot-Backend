@@ -1442,15 +1442,50 @@ async fn broadcast_statistics_update(
     fixture_id: &str,
     minute: i32,
     statistics: serde_json::Value,
-) -> Result<usize> {
+) -> usize {
     let channel_fixtures: Collection<ChannelFixture> = state.db.collection("channel_fixtures");
-    let mut cursor = channel_fixtures
+    let mut cursor = match channel_fixtures
         .find(doc! { "fixture_id": fixture_id })
-        .await?;
+        .await
+    {
+        Ok(cursor) => cursor,
+        Err(error) => {
+            tracing::error!(
+                "Could not load channel rooms for statistics broadcast on fixture {}: {}",
+                fixture_id,
+                error
+            );
+            return 0;
+        }
+    };
     let mut delivered_to_rooms = 0;
 
-    while cursor.advance().await? {
-        let channel_fixture = cursor.deserialize_current()?;
+    loop {
+        match cursor.advance().await {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(error) => {
+                tracing::error!(
+                    "Could not continue channel-room lookup for fixture {}: {}",
+                    fixture_id,
+                    error
+                );
+                break;
+            }
+        }
+
+        let channel_fixture = match cursor.deserialize_current() {
+            Ok(channel_fixture) => channel_fixture,
+            Err(error) => {
+                tracing::warn!(
+                    "Skipping malformed channel-fixture mapping for {}: {}",
+                    fixture_id,
+                    error
+                );
+                continue;
+            }
+        };
+
         broadcast_live_match_update(
             state,
             &channel_fixture.channel_id,
@@ -1467,7 +1502,35 @@ async fn broadcast_statistics_update(
         delivered_to_rooms += 1;
     }
 
-    Ok(delivered_to_rooms)
+    delivered_to_rooms
+}
+
+#[cfg(test)]
+mod possession_validation_tests {
+    use super::{validate_json_possession, validate_possession};
+
+    #[test]
+    fn accepts_missing_and_boundary_possession_values() {
+        assert!(validate_possession(None, "Home").is_ok());
+        assert!(validate_possession(Some(0.0), "Home").is_ok());
+        assert!(validate_possession(Some(100.0), "Away").is_ok());
+    }
+
+    #[test]
+    fn rejects_out_of_range_and_non_finite_possession_values() {
+        assert!(validate_possession(Some(-0.1), "Home").is_err());
+        assert!(validate_possession(Some(100.1), "Away").is_err());
+        assert!(validate_possession(Some(f64::NAN), "Home").is_err());
+        assert!(validate_possession(Some(f64::INFINITY), "Away").is_err());
+    }
+
+    #[test]
+    fn bulk_possession_must_be_numeric_or_null() {
+        assert!(validate_json_possession(&serde_json::json!({"possession": 53}), "Home").is_ok());
+        assert!(validate_json_possession(&serde_json::json!({"possession": null}), "Away").is_ok());
+        assert!(validate_json_possession(&serde_json::json!({"possession": "53%"}), "Home").is_err());
+        assert!(validate_json_possession(&serde_json::json!({"possession": 101}), "Away").is_err());
+    }
 }
 
 fn team_stats_from_json(s: &serde_json::Value) -> TeamStatistics {
@@ -1525,8 +1588,7 @@ pub async fn add_statistics_snapshot(
         AppError::InternalServerError(format!("Failed to serialize statistics for broadcast: {}", e))
     })?;
     let broadcast_rooms =
-        broadcast_statistics_update(&state, &payload.fixture_id, payload.minute, statistics)
-            .await?;
+        broadcast_statistics_update(&state, &payload.fixture_id, payload.minute, statistics).await;
 
     Ok(Json(json!({
         "success": true,
@@ -1607,7 +1669,7 @@ pub async fn bulk_update_statistics(
     .await?;
 
     let broadcast_rooms =
-        broadcast_statistics_update(&state, fixture_id, last_minute, latest_statistics).await?;
+        broadcast_statistics_update(&state, fixture_id, last_minute, latest_statistics).await;
 
     Ok(Json(json!({
         "success": true,
