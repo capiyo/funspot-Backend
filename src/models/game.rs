@@ -567,6 +567,8 @@ impl Game {
             competition_id: None,
             home_team,
             away_team,
+            home_team_image_url: None,
+            away_team_image_url: None,
             league,
             home_win: None,
             away_win: None,
