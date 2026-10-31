@@ -1078,6 +1078,10 @@ pub struct PlayerPayload {
     pub lineup: String,
     #[serde(rename = "playerId")]
     pub player_id: Option<String>,
+    #[serde(default)]
+    pub rating: Option<f64>,
+    #[serde(rename = "imageUrl", default)]
+    pub image_url: Option<String>,
 }
 
 fn map_players(players: Vec<PlayerPayload>, default_lineup: &str) -> Vec<Player> {
@@ -1094,7 +1098,8 @@ fn map_players(players: Vec<PlayerPayload>, default_lineup: &str) -> Vec<Player>
                 p.lineup
             },
             player_id: p.player_id,
-            rating: None,
+            rating: p.rating,
+            image_url: p.image_url,
         })
         .collect()
 }
