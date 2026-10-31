@@ -352,3 +352,44 @@ pub struct BetResponse {
     pub created_at: BsonDateTime,
     pub matched_at: Option<BsonDateTime>,
 }
+
+// ============================================================================
+// POSSESSION PREDICTION SNAPSHOT
+// A possession market is a prediction market, not a raw statistic. The scraper
+// submits the normalized final home/away possession percentages; the market
+// settles to the side with the greater share. Equal/missing values are void.
+// ============================================================================
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PossessionSnapshot {
+    #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
+    pub id: Option<bson::oid::ObjectId>,
+    pub fixture_id: String,
+    pub home_percent: f64,
+    pub away_percent: f64,
+    pub result: Option<String>,
+    pub source: String,
+    pub captured_at: BsonDateTime,
+    pub settled_at: Option<BsonDateTime>,
+}
+
+impl PossessionSnapshot {
+    pub fn from_final(fixture_id: String, home_percent: f64, away_percent: f64, source: String) -> Self {
+        let result = if home_percent > away_percent {
+            Some("home".to_string())
+        } else if away_percent > home_percent {
+            Some("away".to_string())
+        } else {
+            None
+        };
+        Self {
+            id: None,
+            fixture_id,
+            home_percent,
+            away_percent,
+            result,
+            source,
+            captured_at: BsonDateTime::now(),
+            settled_at: None,
+        }
+    }
+}
