@@ -343,6 +343,11 @@ pub struct HistoryGame {
     #[serde(rename = "awayTeam")]
     pub away_team: String,
 
+    #[serde(rename = "homeTeamImageUrl", default)]
+    pub home_team_image_url: Option<String>,
+    #[serde(rename = "awayTeamImageUrl", default)]
+    pub away_team_image_url: Option<String>,
+
     pub league: String,
 
     #[serde(rename = "homeWin")]
