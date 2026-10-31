@@ -88,7 +88,10 @@ pub struct Player {
     pub lineup: String,
     #[serde(rename = "playerId")]
     pub player_id: Option<String>,
+    #[serde(default)]
     pub rating: Option<f64>,
+    #[serde(rename = "imageUrl", default)]
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +207,11 @@ pub struct Game {
 
     #[serde(rename = "awayTeam")]
     pub away_team: String,
+
+    #[serde(rename = "homeTeamImageUrl", default)]
+    pub home_team_image_url: Option<String>,
+    #[serde(rename = "awayTeamImageUrl", default)]
+    pub away_team_image_url: Option<String>,
 
     pub league: String,
 
@@ -334,6 +342,11 @@ pub struct HistoryGame {
 
     #[serde(rename = "awayTeam")]
     pub away_team: String,
+
+    #[serde(rename = "homeTeamImageUrl", default)]
+    pub home_team_image_url: Option<String>,
+    #[serde(rename = "awayTeamImageUrl", default)]
+    pub away_team_image_url: Option<String>,
 
     pub league: String,
 
@@ -554,6 +567,8 @@ impl Game {
             competition_id: None,
             home_team,
             away_team,
+            home_team_image_url: None,
+            away_team_image_url: None,
             league,
             home_win: None,
             away_win: None,
