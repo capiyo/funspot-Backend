@@ -151,6 +151,7 @@ async fn build_router(app_state: AppState) -> Router {
        
         .nest("/api/channels", routes::channel::channel_routes())
         .nest("/api/profile", routes::user_profile::user_profile_routes())
+        .nest("/api/video", routes::video::routes())
         .nest("/api", routes::posts::upload_routes())
         .layer(cors)
         .with_state(app_state)
