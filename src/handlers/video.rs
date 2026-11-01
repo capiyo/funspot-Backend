@@ -192,7 +192,7 @@ pub async fn issue_playback_grant(
             let playback_origin = match std::env::var("VIDEO_PLAYBACK_PUBLIC_ORIGIN") {
                 Ok(value) if value.starts_with("https://") || value.starts_with("http://") => {
                     value.trim_end_matches('/').to_owned()
-                },
+                }
                 _ => {
                     tracing::error!("VIDEO_PLAYBACK_PUBLIC_ORIGIN is missing or invalid");
                     return (
