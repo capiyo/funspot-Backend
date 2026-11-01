@@ -188,17 +188,33 @@ pub async fn issue_playback_grant(
         &claims,
         &EncodingKey::from_secret(grant_secret.as_bytes()),
     ) {
-        Ok(token) => (
-            StatusCode::OK,
-            Json(json!({
-                "success": true,
-                "grant": token,
-                "token_type": "Bearer",
-                "expires_in": PLAYBACK_GRANT_TTL_SECONDS,
-                "fixture_id": claims.fixture_id
-            })),
-        )
-            .into_response(),
+        Ok(token) => {
+            let playback_origin = match std::env::var("VIDEO_PLAYBACK_PUBLIC_ORIGIN") {
+                Ok(value) if value.starts_with("https://") || value.starts_with("http://") => value.trim_end_matches('/').to_owned(),
+                _ => {
+                    tracing::error!("VIDEO_PLAYBACK_PUBLIC_ORIGIN is missing or invalid");
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({ "success": false, "error": "Playback delivery is not configured" })),
+                    )
+                        .into_response();
+                }
+            };
+            let hls_url = format!("{}/live/{}.m3u8?token={}", playback_origin, claims.stream_id, token);
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "grant": token,
+                    "token_type": "Bearer",
+                    "expires_in": PLAYBACK_GRANT_TTL_SECONDS,
+                    "fixture_id": claims.fixture_id,
+                    "stream_id": claims.stream_id,
+                    "hls_url": hls_url
+                })),
+            )
+                .into_response()
+        },
         Err(error) => {
             tracing::error!("Failed to sign video playback grant: {error}");
             (
