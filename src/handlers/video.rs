@@ -205,7 +205,7 @@ pub async fn issue_playback_grant(
                 .trim_start_matches("http://");
             let rtc_api_url = format!("{}/rtc/v1/play/", playback_origin);
             let webrtc_url = format!("webrtc://{}/live/{}?token={}", playback_host, claims.stream_id, token);
-            let hls_url = format!("{}/live/{}.m3u8?token={}", playback_origin, claims.stream_id, token);
+            let hls_url = format!("{}/live/{}.m3u8?token={}&stream={}", playback_origin, claims.stream_id, token, claims.stream_id);
             (
                 StatusCode::OK,
                 Json(json!({
