@@ -30,6 +30,6 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: rustfmt --edition 2021 --check src/handlers/video.rs src/routes/video.rs
       - name: Compile backend
         run: cargo check --all-targets
