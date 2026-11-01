@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
@@ -229,6 +229,85 @@ pub async fn issue_playback_grant(
                 Json(json!({ "success": false, "error": "Unable to authorize playback" })),
             )
                 .into_response()
+        }
+    }
+}
+
+
+#[derive(Debug, Deserialize)]
+pub struct AuthorizePlaybackQuery {
+    pub stream: Option<String>,
+}
+
+/// Validates a short-lived playback grant for the Nginx media edge.
+/// The edge calls this for WebRTC signaling and every HLS manifest/segment.
+pub async fn authorize_playback(
+    State(state): State<AppState>,
+    Query(query): Query<AuthorizePlaybackQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let grant_secret = match std::env::var("VIDEO_PLAYBACK_SIGNING_SECRET") {
+        Ok(value) if value.len() >= 32 => value,
+        _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let bearer = match headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value,
+        None => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    let mut validation = Validation::default();
+    validation.algorithms = vec![jsonwebtoken::Algorithm::HS256];
+    validation.leeway = 2;
+    let claims = match decode::<PlaybackGrantClaims>(
+        bearer,
+        &DecodingKey::from_secret(grant_secret.as_bytes()),
+        &validation,
+    ) {
+        Ok(token) => token.claims,
+        Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    if claims.fixture_id.is_empty()
+        || claims.stream_id.is_empty()
+        || query.stream.as_deref().is_some_and(|stream| stream != claims.stream_id)
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    let user_id = match ObjectId::parse_str(&claims.sub) {
+        Ok(value) => value,
+        Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+    let users = state.db.collection::<Document>("users");
+    match users.find_one(doc! { "_id": user_id }).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(error) => {
+            tracing::error!("Playback grant user revalidation failed: {error}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+
+    let streams = state.db.collection::<Document>("video_streams");
+    match streams
+        .find_one(doc! {
+            "fixture_id": &claims.fixture_id,
+            "stream_id": &claims.stream_id,
+            "status": "live",
+            "rights_status": "authorized"
+        })
+        .await
+    {
+        Ok(Some(_)) => StatusCode::NO_CONTENT.into_response(),
+        Ok(None) => StatusCode::FORBIDDEN.into_response(),
+        Err(error) => {
+            tracing::error!("Playback grant stream revalidation failed: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
 }
