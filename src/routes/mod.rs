@@ -14,8 +14,6 @@ pub(crate) mod user_profile;
 pub(crate) mod visibility;
 pub(crate) mod comments_routes;
 pub(crate) mod notification;
-
-
-// pub mod auth;  // Remove or comment out if not needed
+pub(crate) mod video;
 
 // Re-export all public functions
