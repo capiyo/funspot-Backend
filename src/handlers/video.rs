@@ -200,6 +200,11 @@ pub async fn issue_playback_grant(
                         .into_response();
                 }
             };
+            let playback_host = playback_origin
+                .trim_start_matches("https://")
+                .trim_start_matches("http://");
+            let rtc_api_url = format!("{}/rtc/v1/play/", playback_origin);
+            let webrtc_url = format!("webrtc://{}/live/{}?token={}", playback_host, claims.stream_id, token);
             let hls_url = format!("{}/live/{}.m3u8?token={}", playback_origin, claims.stream_id, token);
             (
                 StatusCode::OK,
@@ -210,6 +215,8 @@ pub async fn issue_playback_grant(
                     "expires_in": PLAYBACK_GRANT_TTL_SECONDS,
                     "fixture_id": claims.fixture_id,
                     "stream_id": claims.stream_id,
+                    "rtc_api_url": rtc_api_url,
+                    "webrtc_url": webrtc_url,
                     "hls_url": hls_url
                 })),
             )
