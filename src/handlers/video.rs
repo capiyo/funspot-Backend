@@ -190,7 +190,9 @@ pub async fn issue_playback_grant(
     ) {
         Ok(token) => {
             let playback_origin = match std::env::var("VIDEO_PLAYBACK_PUBLIC_ORIGIN") {
-                Ok(value) if value.starts_with("https://") || value.starts_with("http://") => value.trim_end_matches('/').to_owned(),
+                Ok(value) if value.starts_with("https://") || value.starts_with("http://") => {
+                    value.trim_end_matches('/').to_owned()
+                },
                 _ => {
                     tracing::error!("VIDEO_PLAYBACK_PUBLIC_ORIGIN is missing or invalid");
                     return (
@@ -204,8 +206,14 @@ pub async fn issue_playback_grant(
                 .trim_start_matches("https://")
                 .trim_start_matches("http://");
             let rtc_api_url = format!("{}/rtc/v1/play/", playback_origin);
-            let webrtc_url = format!("webrtc://{}/live/{}?token={}", playback_host, claims.stream_id, token);
-            let hls_url = format!("{}/live/{}.m3u8?token={}&stream={}", playback_origin, claims.stream_id, token, claims.stream_id);
+            let webrtc_url = format!(
+                "webrtc://{}/live/{}?token={}",
+                playback_host, claims.stream_id, token
+            );
+            let hls_url = format!(
+                "{}/live/{}.m3u8?token={}&stream={}",
+                playback_origin, claims.stream_id, token, claims.stream_id
+            );
             (
                 StatusCode::OK,
                 Json(json!({
@@ -221,7 +229,7 @@ pub async fn issue_playback_grant(
                 })),
             )
                 .into_response()
-        },
+        }
         Err(error) => {
             tracing::error!("Failed to sign video playback grant: {error}");
             (
@@ -232,7 +240,6 @@ pub async fn issue_playback_grant(
         }
     }
 }
-
 
 #[derive(Debug, Deserialize)]
 pub struct AuthorizePlaybackQuery {
@@ -274,7 +281,10 @@ pub async fn authorize_playback(
 
     if claims.fixture_id.is_empty()
         || claims.stream_id.is_empty()
-        || query.stream.as_deref().is_some_and(|stream| stream != claims.stream_id)
+        || query
+            .stream
+            .as_deref()
+            .is_some_and(|stream| stream != claims.stream_id)
     {
         return StatusCode::FORBIDDEN.into_response();
     }
