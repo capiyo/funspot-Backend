@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::{models::user::Claims as UserClaims, state::AppState};
 
-const PLAYBACK_GRANT_TTL_SECONDS: i64 = 60;
+const PLAYBACK_GRANT_TTL_SECONDS: i64 = 14_400;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PlaybackGrantClaims {
