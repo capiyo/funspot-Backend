@@ -1,6 +1,9 @@
 use axum::{routing::get, Router};
 
-use crate::{handlers::video::{authorize_playback, issue_playback_grant}, state::AppState};
+use crate::{
+    handlers::video::{authorize_playback, issue_playback_grant},
+    state::AppState,
+};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
