@@ -744,6 +744,7 @@ impl Message {
             is_video: false,
             reply_to: None,
             reply_to_id: None,
+            mentioned_user_ids: Vec::new(),
         }
     }
 
@@ -783,6 +784,7 @@ impl Message {
             is_video: false,
             reply_to: None,
             reply_to_id: None,
+            mentioned_user_ids: Vec::new(),
         }
     }
 
@@ -825,6 +827,7 @@ impl Message {
             is_video: true,
             reply_to: None,
             reply_to_id: None,
+            mentioned_user_ids: Vec::new(),
         }
     }
 
@@ -875,6 +878,7 @@ impl Message {
                 is_video: false,
             }),
             reply_to_id: Some(reply_to_id),
+            mentioned_user_ids: Vec::new(),
         }
     }
 }
