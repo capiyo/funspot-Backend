@@ -1796,6 +1796,16 @@ async fn save_message_to_database(
             }
         });
 
+    // A reconnect can replay a queued message. Use the client message ID as
+    // the idempotency key so one logical message increments unread once.
+    if messages_col
+        .find_one(doc! { "message_id": &message_id })
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+
     let now_bson = bson::DateTime::now();
 
     let message = Message {
@@ -1827,7 +1837,9 @@ async fn save_message_to_database(
 
     messages_col.insert_one(&message).await?;
 
-    // Update channel fixture counts
+    // Keep the fixture preview metadata and unread counters consistent with
+    // the REST message path. The sender is excluded; each other channel member
+    // gets exactly one increment for this persisted message.
     if let Some(fixture_id) = fixture_id {
         let update_result = channel_fixtures_col
             .update_one(
@@ -1835,9 +1847,43 @@ async fn save_message_to_database(
                     "channel_id": channel_id,
                     "fixture_id": fixture_id,
                 },
-                doc! { "$inc": { "comment_count": 1 } },
+                doc! {
+                    "$inc": { "comment_count": 1 },
+                    "$set": {
+                        "last_message": &text,
+                        "last_message_at": now_bson,
+                        "last_sender": username,
+                    },
+                },
             )
             .await;
+
+        if let Ok(Some(channel)) = channels_col
+            .find_one(doc! { "channel_id": channel_id })
+            .await
+        {
+            for member in channel.members.iter().filter(|member| member.user_id != user_id) {
+                let unread_key = format!("unread_counts.{}", member.user_id);
+                if let Err(error) = channel_fixtures_col
+                    .update_one(
+                        doc! {
+                            "channel_id": channel_id,
+                            "fixture_id": fixture_id,
+                        },
+                        doc! { "$inc": { unread_key: 1 } },
+                    )
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to increment unread count for {} in {} / {}: {}",
+                        member.user_id,
+                        channel_id,
+                        fixture_id,
+                        error
+                    );
+                }
+            }
+        }
 
         match update_result {
             Ok(result) => {
