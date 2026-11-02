@@ -1897,30 +1897,25 @@ async fn save_message_to_database(
             )
             .await;
 
-        if let Ok(Some(channel)) = channels_col
-            .find_one(doc! { "channel_id": channel_id })
-            .await
-        {
-            for member in channel.members.iter().filter(|member| member.user_id != user_id) {
-                let unread_key = format!("unread_counts.{}", member.user_id);
-                if let Err(error) = channel_fixtures_col
-                    .update_one(
-                        doc! {
-                            "channel_id": channel_id,
-                            "fixture_id": fixture_id,
-                        },
-                        doc! { "$inc": { unread_key: 1 } },
-                    )
-                    .await
-                {
-                    tracing::error!(
-                        "Failed to increment unread count for {} in {} / {}: {}",
-                        member.user_id,
-                        channel_id,
-                        fixture_id,
-                        error
-                    );
-                }
+        for member in channel.members.iter().filter(|member| member.user_id != user_id) {
+            let unread_key = format!("unread_counts.{}", member.user_id);
+            if let Err(error) = channel_fixtures_col
+                .update_one(
+                    doc! {
+                        "channel_id": channel_id,
+                        "fixture_id": fixture_id,
+                    },
+                    doc! { "$inc": { unread_key: 1 } },
+                )
+                .await
+            {
+                tracing::error!(
+                    "Failed to increment unread count for {} in {} / {}: {}",
+                    member.user_id,
+                    channel_id,
+                    fixture_id,
+                    error
+                );
             }
         }
 
