@@ -2253,11 +2253,17 @@ pub async fn send_message_handler(
         reply_to,
         reply_to_id: payload.reply_to_id.clone(),
         mentioned_user_ids: payload.mentioned_user_ids.iter()
-            .filter(|mentioned_id| {
-                **mentioned_id != payload.user_id
-                    && channel.members.iter().any(|member| member.user_id == **mentioned_id)
+            .filter_map(|mentioned_id| {
+                let id = mentioned_id.trim();
+                if !id.is_empty()
+                    && id != payload.user_id
+                    && channel.members.iter().any(|member| member.user_id == id)
+                {
+                    Some(id.to_string())
+                } else {
+                    None
+                }
             })
-            .cloned()
             .collect(),
     };
 
