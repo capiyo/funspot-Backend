@@ -248,6 +248,8 @@ pub struct Message {
     pub reply_to: Option<ReplyToData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_id: Option<String>,
+    #[serde(default)]
+    pub mentioned_user_ids: Vec<String>,
 }
 
 // ============================================================================
