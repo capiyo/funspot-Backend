@@ -2981,11 +2981,20 @@ async fn notify_channel_members(
         channel_id, channel.members.len()
     );
 
+    let mentioned_user_ids = payload
+        .get("mentioned_user_ids")
+        .and_then(|value| value.as_array());
     let member_ids: Vec<String> = channel
         .members
         .iter()
-        .filter(|m| m.user_id != actor_id)
-        .map(|m| m.user_id.clone())
+        .filter(|member| {
+            member.user_id != actor_id
+                && !(notification_type == "chat.message"
+                    && mentioned_user_ids
+                        .map(|ids| ids.iter().any(|id| id.as_str() == Some(&member.user_id)))
+                        .unwrap_or(false))
+        })
+        .map(|member| member.user_id.clone())
         .collect();
 
     tracing::debug!(
