@@ -3007,15 +3007,8 @@ async fn notify_channel_members(
         member_ids.len(), actor_id, member_ids
     );
 
-    if member_ids.is_empty() {
-        tracing::debug!(
-            "🔔 [notify_channel_members] No members to notify (channel only contains the actor) — skipping broadcast and FCM. channel_id={}",
-            channel_id
-        );
-        return Ok(());
-    }
-
-    // WebSocket broadcast to the channel room — unconditional, unchanged
+    // Broadcast to the room even when every other member was explicitly
+    // mentioned and therefore excluded from the generic push notification.
     broadcast_to_channel(
         state,
         channel_id,
@@ -3024,6 +3017,14 @@ async fn notify_channel_members(
         payload.clone(),
     )
     .await;
+
+    if member_ids.is_empty() {
+        tracing::debug!(
+            "🔔 [notify_channel_members] No generic push recipients after actor/mention filtering — skipping FCM. channel_id={}",
+            channel_id
+        );
+        return Ok(());
+    }
     tracing::debug!(
         "🔔 [notify_channel_members] WebSocket broadcast sent for channel_id={} fixture_id={}",
         channel_id, fixture_id
