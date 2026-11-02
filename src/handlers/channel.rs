@@ -2422,38 +2422,22 @@ pub async fn send_message_handler(
         )
         .await?;
 
-    // Increment unread counts for all other members
-    let mut session = state.client.start_session().await?;
-    session.start_transaction().await?;
-
-    let channel_fixture = channel_fixtures_col
-        .find_one(doc! {
-            "channel_id": &channel_id,
-            "fixture_id": payload.fixture_id.as_deref().unwrap_or(""),
-        })
-        .session(&mut session)
-        .await?;
-
-    if let Some(mut cf) = channel_fixture {
-        for member in &channel.members {
-            if member.user_id != payload.user_id {
-                let key = format!("unread_counts.{}", member.user_id);
-                let current = cf.unread_counts.get(&member.user_id).copied().unwrap_or(0);
-                let update_doc = doc! { "$set": { key: current + 1 } };
-                channel_fixtures_col
-                    .update_one(
-                        doc! {
-                            "_id": cf.id,
-                        },
-                        update_doc,
-                    )
-                    .session(&mut session)
-                    .await?;
-            }
+    // Atomic per-member increments avoid lost unread updates when REST and
+    // WebSocket messages arrive concurrently.
+    if let Some(fixture_id) = payload.fixture_id.as_deref() {
+        for member in channel.members.iter().filter(|member| member.user_id != payload.user_id) {
+            let unread_key = format!("unread_counts.{}", member.user_id);
+            channel_fixtures_col
+                .update_one(
+                    doc! {
+                        "channel_id": &channel_id,
+                        "fixture_id": fixture_id,
+                    },
+                    doc! { "$inc": { unread_key: 1 } },
+                )
+                .await?;
         }
     }
-
-    session.commit_transaction().await?;
 
     // ✅ Build message payload with temp_id
     let mut message_payload = serde_json::json!({
