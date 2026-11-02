@@ -2176,7 +2176,7 @@ pub struct SendMessageRequest {
     pub reply_to_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_selection: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "mentionedUserIds")]
     pub mentioned_user_ids: Vec<String>,
 }
 
