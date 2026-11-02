@@ -2264,7 +2264,12 @@ pub async fn send_message_handler(
                     None
                 }
             })
-            .collect(),
+            .fold(Vec::new(), |mut ids, id| {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+                ids
+            }),
     };
 
     // If this is a reply, try to fetch the original message for richer reply data
