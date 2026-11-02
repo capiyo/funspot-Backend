@@ -2176,6 +2176,8 @@ pub struct SendMessageRequest {
     pub reply_to_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_selection: Option<String>,
+    #[serde(default)]
+    pub mentioned_user_ids: Vec<String>,
 }
 
 // handlers/channel.rs
@@ -2250,6 +2252,13 @@ pub async fn send_message_handler(
         is_video: payload.is_video,
         reply_to,
         reply_to_id: payload.reply_to_id.clone(),
+        mentioned_user_ids: payload.mentioned_user_ids.iter()
+            .filter(|mentioned_id| {
+                **mentioned_id != payload.user_id
+                    && channel.members.iter().any(|member| member.user_id == **mentioned_id)
+            })
+            .cloned()
+            .collect(),
     };
 
     // If this is a reply, try to fetch the original message for richer reply data
@@ -2273,6 +2282,28 @@ pub async fn send_message_handler(
     }
 
     messages_col.insert_one(&message).await?;
+
+    if let Some(fcm_service) = &state.fcm_service {
+        for mentioned_user_id in &message.mentioned_user_ids {
+            let notification_data = serde_json::json!({
+                "type": "chat.mention",
+                "channel_id": channel_id,
+                "fixture_id": payload.fixture_id,
+                "message_id": message_id,
+                "sender_id": payload.user_id,
+            });
+            if let Err(error) = fcm_service.send_to_user(
+                &state,
+                mentioned_user_id,
+                "You were mentioned",
+                &format!("{} mentioned you in the channel chat", payload.username),
+                notification_data,
+                "chat.mention",
+            ).await {
+                tracing::warn!("Mention push failed for {}: {}", mentioned_user_id, error);
+            }
+        }
+    }
 
     // Update channel fixture counts
     if let Some(fixture_id) = &payload.fixture_id {
