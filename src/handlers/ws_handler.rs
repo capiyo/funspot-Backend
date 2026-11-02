@@ -1806,6 +1806,22 @@ async fn save_message_to_database(
         return Ok(());
     }
 
+    let channel = channels_col
+        .find_one(doc! { "channel_id": channel_id })
+        .await?
+        .ok_or(AppError::DocumentNotFound)?;
+    let mut mentioned_user_ids = Vec::new();
+    if let Some(raw_mentions) = payload.get("mentionedUserIds").and_then(|value| value.as_array()) {
+        for raw_id in raw_mentions.iter().filter_map(|value| value.as_str()) {
+            if raw_id != user_id
+                && channel.members.iter().any(|member| member.user_id == raw_id)
+                && !mentioned_user_ids.iter().any(|existing| existing == raw_id)
+            {
+                mentioned_user_ids.push(raw_id.to_string());
+            }
+        }
+    }
+
     let now_bson = bson::DateTime::now();
 
     let message = Message {
@@ -1833,9 +1849,32 @@ async fn save_message_to_database(
         is_video: is_video,
         reply_to: reply_to,
         reply_to_id: None,
+        mentioned_user_ids: mentioned_user_ids.clone(),
     };
 
     messages_col.insert_one(&message).await?;
+
+    if let Some(fcm_service) = &state.fcm_service {
+        for mentioned_user_id in &mentioned_user_ids {
+            let notification_data = serde_json::json!({
+                "type": "chat.mention",
+                "channel_id": channel_id,
+                "fixture_id": fixture_id,
+                "message_id": message_id,
+                "sender_id": user_id,
+            });
+            if let Err(error) = fcm_service.send_to_user(
+                state,
+                mentioned_user_id,
+                "You were mentioned",
+                &format!("{} mentioned you in the channel chat", username),
+                notification_data,
+                "chat.mention",
+            ).await {
+                tracing::warn!("Mention push failed for {}: {}", mentioned_user_id, error);
+            }
+        }
+    }
 
     // Keep the fixture preview metadata and unread counters consistent with
     // the REST message path. The sender is excluded; each other channel member
