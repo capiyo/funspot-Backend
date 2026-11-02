@@ -2454,6 +2454,7 @@ pub async fn send_message_handler(
         "is_image": payload.is_image,
         "is_video": payload.is_video,
         "reply_to": message.reply_to,
+        "mentioned_user_ids": message.mentioned_user_ids,
         "sent_at": now.to_rfc3339_string(),
     });
 
