@@ -2991,7 +2991,7 @@ async fn notify_channel_members(
             member.user_id != actor_id
                 && !(notification_type == "chat.message"
                     && mentioned_user_ids
-                        .map(|ids| ids.iter().any(|id| id.as_str() == Some(&member.user_id)))
+                        .map(|ids| ids.iter().any(|id| id.as_str() == Some(member.user_id.as_str())))
                         .unwrap_or(false))
         })
         .map(|member| member.user_id.clone())
