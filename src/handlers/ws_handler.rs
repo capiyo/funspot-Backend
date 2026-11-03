@@ -1796,6 +1796,32 @@ async fn save_message_to_database(
             }
         });
 
+    // A reconnect can replay a queued message. Use the client message ID as
+    // the idempotency key so one logical message increments unread once.
+    if messages_col
+        .find_one(doc! { "message_id": &message_id })
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let channel = channels_col
+        .find_one(doc! { "channel_id": channel_id })
+        .await?
+        .ok_or(AppError::DocumentNotFound)?;
+    let mut mentioned_user_ids = Vec::new();
+    if let Some(raw_mentions) = payload.get("mentionedUserIds").and_then(|value| value.as_array()) {
+        for raw_id in raw_mentions.iter().filter_map(|value| value.as_str()) {
+            if raw_id != user_id
+                && channel.members.iter().any(|member| member.user_id == raw_id)
+                && !mentioned_user_ids.iter().any(|existing| existing == raw_id)
+            {
+                mentioned_user_ids.push(raw_id.to_string());
+            }
+        }
+    }
+
     let now_bson = bson::DateTime::now();
 
     let message = Message {
@@ -1823,11 +1849,36 @@ async fn save_message_to_database(
         is_video: is_video,
         reply_to: reply_to,
         reply_to_id: None,
+        mentioned_user_ids: mentioned_user_ids.clone(),
     };
 
     messages_col.insert_one(&message).await?;
 
-    // Update channel fixture counts
+    if let Some(fcm_service) = &state.fcm_service {
+        for mentioned_user_id in &mentioned_user_ids {
+            let notification_data = serde_json::json!({
+                "type": "chat.mention",
+                "channel_id": channel_id,
+                "fixture_id": fixture_id,
+                "message_id": message_id,
+                "sender_id": user_id,
+            });
+            if let Err(error) = fcm_service.send_to_user(
+                state,
+                mentioned_user_id,
+                "You were mentioned",
+                &format!("{} mentioned you in the channel chat", username),
+                notification_data,
+                "chat.mention",
+            ).await {
+                tracing::warn!("Mention push failed for {}: {}", mentioned_user_id, error);
+            }
+        }
+    }
+
+    // Keep the fixture preview metadata and unread counters consistent with
+    // the REST message path. The sender is excluded; each other channel member
+    // gets exactly one increment for this persisted message.
     if let Some(fixture_id) = fixture_id {
         let update_result = channel_fixtures_col
             .update_one(
@@ -1835,9 +1886,38 @@ async fn save_message_to_database(
                     "channel_id": channel_id,
                     "fixture_id": fixture_id,
                 },
-                doc! { "$inc": { "comment_count": 1 } },
+                doc! {
+                    "$inc": { "comment_count": 1 },
+                    "$set": {
+                        "last_message": &text,
+                        "last_message_at": now_bson,
+                        "last_sender": username,
+                    },
+                },
             )
             .await;
+
+        for member in channel.members.iter().filter(|member| member.user_id != user_id) {
+            let unread_key = format!("unread_counts.{}", member.user_id);
+            if let Err(error) = channel_fixtures_col
+                .update_one(
+                    doc! {
+                        "channel_id": channel_id,
+                        "fixture_id": fixture_id,
+                    },
+                    doc! { "$inc": { unread_key: 1 } },
+                )
+                .await
+            {
+                tracing::error!(
+                    "Failed to increment unread count for {} in {} / {}: {}",
+                    member.user_id,
+                    channel_id,
+                    fixture_id,
+                    error
+                );
+            }
+        }
 
         match update_result {
             Ok(result) => {

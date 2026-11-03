@@ -2176,6 +2176,8 @@ pub struct SendMessageRequest {
     pub reply_to_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_selection: Option<String>,
+    #[serde(default, alias = "mentionedUserIds")]
+    pub mentioned_user_ids: Vec<String>,
 }
 
 // handlers/channel.rs
@@ -2250,6 +2252,24 @@ pub async fn send_message_handler(
         is_video: payload.is_video,
         reply_to,
         reply_to_id: payload.reply_to_id.clone(),
+        mentioned_user_ids: payload.mentioned_user_ids.iter()
+            .filter_map(|mentioned_id| {
+                let id = mentioned_id.trim();
+                if !id.is_empty()
+                    && id != payload.user_id
+                    && channel.members.iter().any(|member| member.user_id == id)
+                {
+                    Some(id.to_string())
+                } else {
+                    None
+                }
+            })
+            .fold(Vec::new(), |mut ids, id| {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+                ids
+            }),
     };
 
     // If this is a reply, try to fetch the original message for richer reply data
@@ -2273,6 +2293,28 @@ pub async fn send_message_handler(
     }
 
     messages_col.insert_one(&message).await?;
+
+    if let Some(fcm_service) = &state.fcm_service {
+        for mentioned_user_id in &message.mentioned_user_ids {
+            let notification_data = serde_json::json!({
+                "type": "chat.mention",
+                "channel_id": channel_id,
+                "fixture_id": payload.fixture_id,
+                "message_id": message_id,
+                "sender_id": payload.user_id,
+            });
+            if let Err(error) = fcm_service.send_to_user(
+                &state,
+                mentioned_user_id,
+                "You were mentioned",
+                &format!("{} mentioned you in the channel chat", payload.username),
+                notification_data,
+                "chat.mention",
+            ).await {
+                tracing::warn!("Mention push failed for {}: {}", mentioned_user_id, error);
+            }
+        }
+    }
 
     // Update channel fixture counts
     if let Some(fixture_id) = &payload.fixture_id {
@@ -2385,38 +2427,22 @@ pub async fn send_message_handler(
         )
         .await?;
 
-    // Increment unread counts for all other members
-    let mut session = state.client.start_session().await?;
-    session.start_transaction().await?;
-
-    let channel_fixture = channel_fixtures_col
-        .find_one(doc! {
-            "channel_id": &channel_id,
-            "fixture_id": payload.fixture_id.as_deref().unwrap_or(""),
-        })
-        .session(&mut session)
-        .await?;
-
-    if let Some(mut cf) = channel_fixture {
-        for member in &channel.members {
-            if member.user_id != payload.user_id {
-                let key = format!("unread_counts.{}", member.user_id);
-                let current = cf.unread_counts.get(&member.user_id).copied().unwrap_or(0);
-                let update_doc = doc! { "$set": { key: current + 1 } };
-                channel_fixtures_col
-                    .update_one(
-                        doc! {
-                            "_id": cf.id,
-                        },
-                        update_doc,
-                    )
-                    .session(&mut session)
-                    .await?;
-            }
+    // Atomic per-member increments avoid lost unread updates when REST and
+    // WebSocket messages arrive concurrently.
+    if let Some(fixture_id) = payload.fixture_id.as_deref() {
+        for member in channel.members.iter().filter(|member| member.user_id != payload.user_id) {
+            let unread_key = format!("unread_counts.{}", member.user_id);
+            channel_fixtures_col
+                .update_one(
+                    doc! {
+                        "channel_id": &channel_id,
+                        "fixture_id": fixture_id,
+                    },
+                    doc! { "$inc": { unread_key: 1 } },
+                )
+                .await?;
         }
     }
-
-    session.commit_transaction().await?;
 
     // ✅ Build message payload with temp_id
     let mut message_payload = serde_json::json!({
@@ -2433,6 +2459,7 @@ pub async fn send_message_handler(
         "is_image": payload.is_image,
         "is_video": payload.is_video,
         "reply_to": message.reply_to,
+        "mentioned_user_ids": message.mentioned_user_ids,
         "sent_at": now.to_rfc3339_string(),
     });
 
@@ -2959,11 +2986,20 @@ async fn notify_channel_members(
         channel_id, channel.members.len()
     );
 
+    let mentioned_user_ids = payload
+        .get("mentioned_user_ids")
+        .and_then(|value| value.as_array());
     let member_ids: Vec<String> = channel
         .members
         .iter()
-        .filter(|m| m.user_id != actor_id)
-        .map(|m| m.user_id.clone())
+        .filter(|member| {
+            member.user_id != actor_id
+                && !(notification_type == "chat.message"
+                    && mentioned_user_ids
+                        .map(|ids| ids.iter().any(|id| id.as_str() == Some(member.user_id.as_str())))
+                        .unwrap_or(false))
+        })
+        .map(|member| member.user_id.clone())
         .collect();
 
     tracing::debug!(
@@ -2971,15 +3007,8 @@ async fn notify_channel_members(
         member_ids.len(), actor_id, member_ids
     );
 
-    if member_ids.is_empty() {
-        tracing::debug!(
-            "🔔 [notify_channel_members] No members to notify (channel only contains the actor) — skipping broadcast and FCM. channel_id={}",
-            channel_id
-        );
-        return Ok(());
-    }
-
-    // WebSocket broadcast to the channel room — unconditional, unchanged
+    // Broadcast to the room even when every other member was explicitly
+    // mentioned and therefore excluded from the generic push notification.
     broadcast_to_channel(
         state,
         channel_id,
@@ -2988,6 +3017,14 @@ async fn notify_channel_members(
         payload.clone(),
     )
     .await;
+
+    if member_ids.is_empty() {
+        tracing::debug!(
+            "🔔 [notify_channel_members] No generic push recipients after actor/mention filtering — skipping FCM. channel_id={}",
+            channel_id
+        );
+        return Ok(());
+    }
     tracing::debug!(
         "🔔 [notify_channel_members] WebSocket broadcast sent for channel_id={} fixture_id={}",
         channel_id, fixture_id

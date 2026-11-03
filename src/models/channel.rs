@@ -248,6 +248,8 @@ pub struct Message {
     pub reply_to: Option<ReplyToData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_id: Option<String>,
+    #[serde(default)]
+    pub mentioned_user_ids: Vec<String>,
 }
 
 // ============================================================================
@@ -347,6 +349,8 @@ pub struct MessageResponse {
     pub reply_to: Option<ReplyToData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_id: Option<String>,
+    #[serde(default)]
+    pub mentioned_user_ids: Vec<String>,
 }
 
 impl From<Message> for MessageResponse {
@@ -376,6 +380,7 @@ impl From<Message> for MessageResponse {
             is_video: msg.is_video,
             reply_to: msg.reply_to,
             reply_to_id: msg.reply_to_id,
+            mentioned_user_ids: msg.mentioned_user_ids,
         }
     }
 }
@@ -742,6 +747,7 @@ impl Message {
             is_video: false,
             reply_to: None,
             reply_to_id: None,
+            mentioned_user_ids: Vec::new(),
         }
     }
 
@@ -781,6 +787,7 @@ impl Message {
             is_video: false,
             reply_to: None,
             reply_to_id: None,
+            mentioned_user_ids: Vec::new(),
         }
     }
 
@@ -823,6 +830,7 @@ impl Message {
             is_video: true,
             reply_to: None,
             reply_to_id: None,
+            mentioned_user_ids: Vec::new(),
         }
     }
 
@@ -873,6 +881,7 @@ impl Message {
                 is_video: false,
             }),
             reply_to_id: Some(reply_to_id),
+            mentioned_user_ids: Vec::new(),
         }
     }
 }
