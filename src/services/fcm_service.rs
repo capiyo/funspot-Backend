@@ -56,10 +56,7 @@ let project_id =
             "✅ FIREBASE_PRIVATE_KEY found (length: {} chars)",
             private_key.len()
         );
-        println!(
-            "   Preview: {}...",
-            &private_key[0..50.min(private_key.len())]
-        );
+        // Never print private-key material to application logs.
         println!("✅ Using project_id: {}", project_id);
 
         // Create a JSON string from the environment variables
@@ -134,10 +131,7 @@ let project_id =
                             "✅ [FCM] Token string extracted, length: {}",
                             token_str.len()
                         );
-                        println!(
-                            "✅ [FCM] Token preview: {}...",
-                            &token_str[0..20.min(token_str.len())]
-                        );
+                        // Never print OAuth bearer tokens to application logs.
                         Ok(token_str.to_string())
                     }
                     None => {
