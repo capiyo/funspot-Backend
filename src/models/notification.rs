@@ -8,7 +8,7 @@ pub struct FCMToken {
     pub id: Option<ObjectId>,
     pub user_id: String,
     pub fcm_token: String,
-    pub platform: String, // "android" or "ios"
+    pub platform: String, // "web", "android" or "ios"
     pub created_at: BsonDateTime,
     pub updated_at: BsonDateTime,
 }
@@ -18,6 +18,12 @@ pub struct RegisterTokenRequest {
     pub user_id: String,
     pub fcm_token: String,
     pub platform: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnregisterTokenRequest {
+    pub user_id: String,
+    pub fcm_token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

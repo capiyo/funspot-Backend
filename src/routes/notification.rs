@@ -4,6 +4,7 @@ use axum::{
 };
 use crate::handlers::notification_handler::{
     register_token,
+    unregister_token,
     send_notification,
     send_bulk_notifications,
     get_user_notifications,
@@ -19,6 +20,7 @@ use crate::state::AppState;
 pub fn notification_routes() -> Router<AppState> {
     Router::new()
         .route("/register-token", post(register_token))
+        .route("/unregister-token", delete(unregister_token))
         .route("/send", post(send_notification))
         .route("/send-bulk", post(send_bulk_notifications))
         .route("/user/:user_id", get(get_user_notifications))

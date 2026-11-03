@@ -11,7 +11,7 @@ use crate::{
     models::notification::{
         FCMToken, Notification, RegisterTokenRequest,
         SendNotificationRequest, MarkReadRequest, UpdatePreferencesRequest,
-        NotificationPreferences,
+        NotificationPreferences, UnregisterTokenRequest,
     },
     state::AppState,
 };
@@ -26,10 +26,9 @@ pub async fn register_token(
     let collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
 
     // Check if token already exists
-    let filter = doc! {
-        "user_id": &payload.user_id,
-        "fcm_token": &payload.fcm_token,
-    };
+    // A physical device/browser token belongs to one active account at a time.
+    // Reassigning by token prevents a logged-out account receiving future pushes.
+    let filter = doc! { "fcm_token": &payload.fcm_token };
 
     let existing = collection.find_one(filter.clone()).await
         .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
@@ -52,6 +51,7 @@ pub async fn register_token(
         // Update existing token
         let update = doc! {
             "$set": {
+                "user_id": &payload.user_id,
                 "updated_at": BsonDateTime::now(),
                 "platform": &payload.platform,
             }
@@ -65,6 +65,24 @@ pub async fn register_token(
         "success": true,
         "message": "Token registered successfully",
         "user_id": payload.user_id,
+    })))
+}
+
+// Remove a device token when its account signs out.
+pub async fn unregister_token(
+    State(state): State<AppState>,
+    Json(payload): Json<UnregisterTokenRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
+    let result = collection.delete_one(doc! {
+        "user_id": &payload.user_id,
+        "fcm_token": &payload.fcm_token,
+    }).await
+        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
+
+    Ok(Json(json!({
+        "success": true,
+        "removed": result.deleted_count > 0,
     })))
 }
 
