@@ -256,7 +256,10 @@ pub async fn get_unread_summary(
             "vote_supporter",
             "fixture_comment",
             "fixture_comment_push",
-            "vote.cast"
+            "vote.cast",
+            "poke.create",
+            "poke.matched",
+            "poke.settled"
         ] }
     };
     let notifications = collection.count_documents(unread_filter).await
