@@ -26,9 +26,19 @@ pub async fn register_token(
     let collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
 
     // Check if token already exists
-    // A physical device/browser token belongs to one active account at a time.
-    // Reassigning by token prevents a logged-out account receiving future pushes.
-    let filter = doc! { "fcm_token": &payload.fcm_token };
+    // Remove stale ownership rows before registering this device for the
+    // currently signed-in account. This prevents duplicate pushes to a shared token.
+    let stale_owners = doc! {
+        "fcm_token": &payload.fcm_token,
+        "user_id": { "$ne": &payload.user_id },
+    };
+    collection.delete_many(stale_owners).await
+        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
+
+    let filter = doc! {
+        "user_id": &payload.user_id,
+        "fcm_token": &payload.fcm_token,
+    };
 
     let existing = collection.find_one(filter.clone()).await
         .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
@@ -51,7 +61,6 @@ pub async fn register_token(
         // Update existing token
         let update = doc! {
             "$set": {
-                "user_id": &payload.user_id,
                 "updated_at": BsonDateTime::now(),
                 "platform": &payload.platform,
             }
