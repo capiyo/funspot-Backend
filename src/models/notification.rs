@@ -53,6 +53,7 @@ pub struct NotificationResponse {
 pub struct MarkReadRequest {
     pub user_id: String,
     pub notification_ids: Option<Vec<String>>,
+    pub fixture_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

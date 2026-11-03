@@ -213,6 +213,10 @@ pub async fn mark_notifications_read(
 
     let mut filter = doc! { "user_id": &payload.user_id, "is_read": false };
 
+    if let Some(fixture_id) = payload.fixture_id.as_deref() {
+        filter.insert("data.fixture_id", fixture_id);
+    }
+
     if let Some(ids) = &payload.notification_ids {
         let object_ids: Vec<ObjectId> = ids
             .iter()
