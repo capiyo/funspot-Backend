@@ -12,6 +12,7 @@ use crate::handlers::notification_handler::{
     update_notification_preferences,
     cleanup_expired_tokens,
     get_user_token_status,
+    get_unread_summary,
 };
 use crate::state::AppState;
 
@@ -22,6 +23,7 @@ pub fn notification_routes() -> Router<AppState> {
         .route("/send-bulk", post(send_bulk_notifications))
         .route("/user/:user_id", get(get_user_notifications))
         .route("/mark-read", put(mark_notifications_read))
+        .route("/unread-summary/:user_id", get(get_unread_summary))
         .route("/preferences/:user_id", get(get_notification_preferences))
         .route("/preferences", put(update_notification_preferences))
         .route("/cleanup", delete(cleanup_expired_tokens))

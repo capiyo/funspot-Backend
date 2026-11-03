@@ -218,9 +218,14 @@ pub async fn mark_notifications_read(
             .iter()
             .filter_map(|id| ObjectId::parse_str(id).ok())
             .collect();
-        if !object_ids.is_empty() {
-            filter.insert("_id", doc! { "$in": object_ids });
+        if object_ids.is_empty() {
+            return Ok(Json(json!({
+                "success": true,
+                "message": "No valid notification IDs supplied",
+                "modified_count": 0,
+            })));
         }
+        filter.insert("_id", doc! { "$in": object_ids });
     }
 
     let update = doc! { "$set": { "is_read": true } };
@@ -236,39 +241,81 @@ pub async fn mark_notifications_read(
     })))
 }
 
-// Get user's notification preferences
+// Return server-authoritative unread counts so clients can reconcile local badges.
+pub async fn get_unread_summary(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    let collection: Collection<Notification> = state.db.collection("notifications");
+    let unread_filter = doc! { "user_id": &user_id, "is_read": false };
+    let comments_filter = doc! {
+        "user_id": &user_id,
+        "is_read": false,
+        "notification_type": { "$in": [
+            "vote_rival",
+            "vote_supporter",
+            "fixture_comment",
+            "fixture_comment_push",
+            "vote.cast"
+        ] }
+    };
+    let notifications = collection.count_documents(unread_filter).await
+        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
+    let comments = collection.count_documents(comments_filter).await
+        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
+
+    Ok(Json(json!({ "notifications": notifications, "comments": comments })))
+}
+
+// Preferences are stored per account and survive sign-in on another device.
 pub async fn get_notification_preferences(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(user_id): Path<String>,
 ) -> Result<Json<NotificationPreferences>> {
-    println!("⚙️ Getting notification preferences for user: {}", user_id);
+    let collection: Collection<mongodb::bson::Document> =
+        state.db.collection("notification_preferences");
+    let saved = collection.find_one(doc! { "user_id": &user_id }).await
+        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
 
-    // You can store preferences in a separate collection
-    // For now, return defaults
-    let preferences = NotificationPreferences {
+    let preferences = saved.map(|document| NotificationPreferences {
+        vote_alerts: document.get_bool("vote_alerts").unwrap_or(true),
+        like_alerts: document.get_bool("like_alerts").unwrap_or(true),
+        comment_alerts: document.get_bool("comment_alerts").unwrap_or(true),
+    }).unwrap_or(NotificationPreferences {
         vote_alerts: true,
         like_alerts: true,
         comment_alerts: true,
-    };
+    });
 
     Ok(Json(preferences))
 }
 
-// Update notification preferences
 pub async fn update_notification_preferences(
-
-    State(_state): State<AppState>,  // Add underscore
+    State(state): State<AppState>,
     Json(payload): Json<UpdatePreferencesRequest>,
 ) -> Result<Json<serde_json::Value>> {
-    println!("⚙️ Updating notification preferences for user: {}", payload.user_id);
-
-    // TODO: Save to database when you implement preferences collection
-    // For now, just return success
+    let collection: Collection<mongodb::bson::Document> =
+        state.db.collection("notification_preferences");
+    let filter = doc! { "user_id": &payload.user_id };
+    let update = doc! {
+        "$set": {
+            "user_id": &payload.user_id,
+            "vote_alerts": payload.vote_alerts,
+            "like_alerts": payload.like_alerts,
+            "comment_alerts": payload.comment_alerts,
+            "updated_at": BsonDateTime::now(),
+        }
+    };
+    collection.update_one(filter, update).upsert(true).await
+        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
 
     Ok(Json(json!({
         "success": true,
         "message": "Preferences updated successfully",
         "user_id": payload.user_id,
+        "vote_alerts": payload.vote_alerts,
+        "like_alerts": payload.like_alerts,
+        "comment_alerts": payload.comment_alerts,
     })))
 }
 
