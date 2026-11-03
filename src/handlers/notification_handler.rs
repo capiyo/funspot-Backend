@@ -243,6 +243,9 @@ pub async fn mark_notifications_read(
     if let Some(fixture_id) = payload.fixture_id.as_deref() {
         filter.insert("data.fixture_id", fixture_id);
     }
+    if let Some(channel_id) = payload.channel_id.as_deref() {
+        filter.insert("data.channel_id", channel_id);
+    }
 
     if let Some(ids) = &payload.notification_ids {
         let object_ids: Vec<ObjectId> = ids
