@@ -269,6 +269,9 @@ let project_id =
                 "data": {
                     "type": notification_type,
                     "click_action": "FLUTTER_NOTIFICATION_CLICK",
+                    "url": data.get("url").and_then(Value::as_str).unwrap_or("/"),
+                    "channel_id": data.get("channel_id").and_then(Value::as_str).unwrap_or(""),
+                    "fixture_id": data.get("fixture_id").and_then(Value::as_str).unwrap_or(""),
                     "data": serde_json::to_string(&data).unwrap_or_default(),
                 },
                 "android": {

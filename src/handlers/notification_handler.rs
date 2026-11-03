@@ -259,7 +259,8 @@ pub async fn get_unread_summary(
             "vote.cast",
             "poke.create",
             "poke.matched",
-            "poke.settled"
+            "poke.settled",
+            "chat.message"
         ] }
     };
     let notifications = collection.count_documents(unread_filter).await

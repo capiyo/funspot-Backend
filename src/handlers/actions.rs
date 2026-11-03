@@ -144,6 +144,7 @@ async fn notify_channel_members(
         "channel_id": channel_id,
         "fixture_id": fixture_id,
         "actor_id": actor_id,
+        "url": format!("/messages/{}?fixtureId={}", channel_id, fixture_id),
     });
 
     for user_id in member_ids {
