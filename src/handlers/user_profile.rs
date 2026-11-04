@@ -165,6 +165,7 @@ pub async fn save_user_profile(
         nickname: payload.nickname,
         club_fan: payload.club_fan,
         country_fan: payload.country_fan,
+        avatar_url: existing_user.as_ref().and_then(|user| user.avatar_url.clone()),
         balance: payload.balance,
         number_of_bets: payload.number_of_bets,
         created_at: existing_user.as_ref()
@@ -400,6 +401,7 @@ pub async fn create_user_profile(
         nickname: payload.nickname,
         club_fan: payload.club_fan,
         country_fan: payload.country_fan,
+        avatar_url: None,
         balance: payload.balance,
         number_of_bets: payload.number_of_bets,
         created_at: BsonDateTime::from_chrono(now),
