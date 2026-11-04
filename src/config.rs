@@ -49,6 +49,9 @@ pub fn validate_jwt_secret(secret: &str) -> Result<(), String> {
     ]
     .iter()
     .any(|placeholder| lower == *placeholder)
+        || lower.starts_with("change-me-")
+        || lower.starts_with("your-secret-")
+        || lower.starts_with("insecure-default-")
     {
         return Err("JWT_SECRET must not be a known placeholder value".to_string());
     }
