@@ -13,7 +13,7 @@ use rand::Rng;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::auth::verify_firebase_phone_token;
+use crate::auth::{authorize_user, verify_firebase_phone_token};
 use crate::models::user::{
     AuthResponse, Claims, CreateUserRequest, PinLoginRequest, SetPinRequest,
     UpdateUserPointsRequest, User, UserResponse,
@@ -567,9 +567,6 @@ pub async fn check_user_exists(
     Path(phone): Path<String>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(error) = verify_firebase_phone_token(&headers, &phone).await {
-        return error.into_response();
-    }
     println!("🔍 Checking if user exists: {}", phone);
 
     let collection: Collection<User> = state.db.collection("users");
@@ -668,22 +665,7 @@ pub async fn set_pin(
         }
     };
 
-    let existing_user = match collection.find_one(doc! { "_id": object_id }).await {
-        Ok(Some(user)) => user,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "success": false, "message": "User not found" })),
-            ).into_response();
-        }
-        Err(error) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "success": false, "message": format!("Database error: {}", error) })),
-            ).into_response();
-        }
-    };
-    if let Err(error) = verify_firebase_phone_token(&headers, &existing_user.phone).await {
+    if let Err(error) = authorize_user(&headers, &user_id) {
         return error.into_response();
     }
 
