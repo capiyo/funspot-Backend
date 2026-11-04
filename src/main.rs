@@ -66,34 +66,30 @@ async fn initialize_app_state(client: mongodb::Client, db: mongodb::Database) ->
 
     tracing::info!("🔧 Attempting to initialize M-Pesa service...");
 
-    // Try to load AppConfig
-    let config_result = std::panic::catch_unwind(|| config::AppConfig::from_env());
-
-    match config_result {
-        Ok(config) => {
-            tracing::info!("✅ App config loaded successfully");
-            tracing::info!("📱 Short code: {}", config.mpesa_short_code);
-            tracing::info!("🌐 Environment: {}", config.mpesa_environment);
-
-            // Create M-Pesa service
-            let mpesa_service = Arc::new(services::mpesa_service::MpesaService::new(config));
-
-            // Try to get access token to verify credentials
-            match mpesa_service.get_access_token().await {
-                Ok(token) => {
-                    tracing::info!("✅ M-Pesa access token obtained");
-                    tracing::debug!("Token (first 20 chars): {}", &token[0..20.min(token.len())]);
-                    app_state = app_state.with_mpesa(mpesa_service);
-                    tracing::info!("✅ M-Pesa service initialized and ready");
-                }
-                Err(e) => {
-                    tracing::error!("❌ Failed to get M-Pesa access token: {}", e);
-                    tracing::warn!("M-Pesa service will be disabled");
-                }
-            }
+    // JWT signing is a core security dependency. AppConfig::from_env validates
+    // JWT_SECRET and fails closed if it is missing, weak, or a known placeholder.
+    // Optional M-Pesa credentials still disable only that integration.
+    let config = match config::AppConfig::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::error!("Invalid application security configuration: {}", error);
+            std::process::exit(1);
         }
-        Err(_) => {
-            tracing::error!("❌ Failed to load App config (panic caught)");
+    };
+    tracing::info!("✅ App config loaded successfully");
+    tracing::info!("📱 Short code: {}", config.mpesa_short_code);
+    tracing::info!("🌐 Environment: {}", config.mpesa_environment);
+
+    let mpesa_service = Arc::new(services::mpesa_service::MpesaService::new(config));
+    match mpesa_service.get_access_token().await {
+        Ok(token) => {
+            tracing::info!("✅ M-Pesa access token obtained");
+            tracing::debug!("Token (first 20 chars): {}", &token[0..20.min(token.len())]);
+            app_state = app_state.with_mpesa(mpesa_service);
+            tracing::info!("✅ M-Pesa service initialized and ready");
+        }
+        Err(e) => {
+            tracing::error!("❌ Failed to get M-Pesa access token: {}", e);
             tracing::warn!("M-Pesa service will be disabled");
         }
     }
