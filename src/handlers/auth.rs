@@ -264,14 +264,17 @@ fn generate_token(user_id: &str, username: &str, phone: &str) -> String {
         exp: (Utc::now().timestamp() + 86400) as usize,
     };
 
-    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
+    // Startup validates JWT_SECRET before accepting traffic. Do not mint
+    // tokens with a development fallback or silently return an empty token.
+    let secret = std::env::var("JWT_SECRET")
+        .expect("JWT_SECRET must be configured before the API starts");
 
     encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(secret.as_ref()),
+        &EncodingKey::from_secret(secret.as_bytes()),
     )
-    .unwrap_or_else(|_| "".to_string())
+    .expect("JWT signing failed despite validated configuration")
 }
 
 // ============================================================================
