@@ -23,6 +23,8 @@ pub struct UserProfile {
     pub nickname: String,
     pub club_fan: String,
     pub country_fan: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub balance: f64,
     pub number_of_bets: i32,
 
