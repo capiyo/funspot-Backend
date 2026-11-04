@@ -1,15 +1,13 @@
 use crate::{errors::AppError, models::channel::Channel, AppState};
-use axum::{extract::{Query, State}, http::HeaderMap, Json};
+use axum::{extract::{Query, State}, Json};
 use bson::{doc, oid::ObjectId, DateTime as BsonDateTime, Document, Bson};
 use futures_util::StreamExt;
 use mongodb::Collection;
-use jsonwebtoken::{decode, DecodingKey, Validation};
-use crate::models::user::Claims;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Debug, Deserialize)]
-pub struct PossessionQuery { pub fixture_id: String, pub channel_id: String }
+pub struct PossessionQuery { pub fixture_id: String, pub channel_id: String, pub user_id: String }
 #[derive(Debug, Deserialize)]
 pub struct PossessionVoteRequest {
     pub fixture_id: String, pub channel_id: String, pub user_id: String,
@@ -37,19 +35,7 @@ fn validate_side(side: &str) -> Result<(), AppError> {
 fn id(value: &str) -> Result<ObjectId, AppError> {
     ObjectId::parse_str(value).map_err(|e| AppError::InvalidObjectId(e.to_string()))
 }
-fn authenticated_user(headers: &HeaderMap) -> Result<String, AppError> {
-    let token = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ")).ok_or(AppError::Unauthorized)?;
-    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
-    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &Validation::default())
-        .map_err(|_| AppError::Unauthorized)?.claims;
-    Ok(claims.sub)
-}
-fn verify_actor(headers: &HeaderMap, user_id: &str) -> Result<(), AppError> {
-    if authenticated_user(headers)? == user_id { Ok(()) } else { Err(AppError::Unauthorized) }
-}
-async fn require_member(state: &AppState, channel_id: &str, user_id: &str, headers: &HeaderMap) -> Result<(), AppError> {
-    verify_actor(headers, user_id)?;
+async fn require_member(state: &AppState, channel_id: &str, user_id: &str) -> Result<(), AppError> {
     let channels: Collection<Channel> = state.db.collection("channels");
     let channel = channels.find_one(doc! { "channel_id": channel_id }).await.map_err(AppError::MongoDB)?
         .ok_or(AppError::DocumentNotFound)?;
@@ -121,23 +107,23 @@ async fn market_snapshot(state: &AppState, fixture_id: &str, channel_id: &str, v
     }))
 }
 
-pub async fn get_possession_market(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
-    let viewer = authenticated_user(&headers)?; require_member(&state, &q.channel_id, &viewer, &headers).await?;
-    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&viewer)).await?;
+pub async fn get_possession_market(State(state): State<AppState>, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
+    require_member(&state, &q.channel_id, &q.user_id).await?;
+    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&q.user_id)).await?;
     Ok(Json(json!({ "success": true, "market": data })))
 }
-pub async fn get_possession_votes(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
-    let viewer = authenticated_user(&headers)?; require_member(&state, &q.channel_id, &viewer, &headers).await?;
-    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&viewer)).await?;
+pub async fn get_possession_votes(State(state): State<AppState>, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
+    require_member(&state, &q.channel_id, &q.user_id).await?;
+    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&q.user_id)).await?;
     Ok(Json(json!({ "success": true, "votes": data["votes"] })))
 }
-pub async fn get_possession_pokes(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
-    let viewer = authenticated_user(&headers)?; require_member(&state, &q.channel_id, &viewer, &headers).await?;
-    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&viewer)).await?;
+pub async fn get_possession_pokes(State(state): State<AppState>, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
+    require_member(&state, &q.channel_id, &q.user_id).await?;
+    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&q.user_id)).await?;
     Ok(Json(json!({ "success": true, "pokes": data["pokes"] })))
 }
-pub async fn cast_possession_vote(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PossessionVoteRequest>) -> Result<Json<Value>, AppError> {
-    validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
+pub async fn cast_possession_vote(State(state): State<AppState>, Json(p): Json<PossessionVoteRequest>) -> Result<Json<Value>, AppError> {
+    validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id).await?;
     ensure_market_open(&state, &p.fixture_id, &p.channel_id).await?;
     let users: Collection<Document> = state.db.collection("users");
     let user = users.find_one(doc! { "_id": id(&p.user_id)? }).await.map_err(AppError::MongoDB)?.ok_or(AppError::UserNotFound)?;
@@ -160,7 +146,7 @@ pub async fn cast_possession_vote(State(state): State<AppState>, headers: Header
         "id": vote_id, "user_id": p.user_id, "username": username, "selection": p.selection, "created_at": now.to_chrono().to_rfc3339()
     }, "market": data })))
 }
-pub async fn create_possession_poke(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PossessionPokeRequest>) -> Result<Json<Value>, AppError> {
+pub async fn create_possession_poke(State(state): State<AppState>, Json(p): Json<PossessionPokeRequest>) -> Result<Json<Value>, AppError> {
     validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
     ensure_market_open(&state, &p.fixture_id, &p.channel_id).await?;
     if p.amount < 5 { return Err(AppError::ValidationError("Minimum possession poke is 5 points".into())); }
@@ -194,7 +180,7 @@ pub async fn create_possession_poke(State(state): State<AppState>, headers: Head
         "amount": p.amount, "status": "open", "created_at": now.to_chrono().to_rfc3339()
     }, "market": data })))
 }
-pub async fn match_possession_poke(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<MatchPossessionPokeRequest>) -> Result<Json<Value>, AppError> {
+pub async fn match_possession_poke(State(state): State<AppState>, Json(p): Json<MatchPossessionPokeRequest>) -> Result<Json<Value>, AppError> {
     require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
     ensure_market_open(&state, &p.fixture_id, &p.channel_id).await?;
     let poke_oid = id(&p.poke_id)?; let user_oid = id(&p.user_id)?;
