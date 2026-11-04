@@ -148,7 +148,7 @@ pub async fn cast_possession_vote(State(state): State<AppState>, headers: Header
     if existing.is_some() { return Err(AppError::ValidationError("You have already voted on possession for this fixture".into())); }
     let result = votes.insert_one(doc! {
         "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "user_id": &p.user_id,
-        "username": username, "selection": &p.selection, "created_at": now,
+        "username": &username, "selection": &p.selection, "created_at": now,
     }).await.map_err(AppError::MongoDB)?;
     let vote_id = result.inserted_id.as_object_id().map(|v| v.to_hex()).unwrap_or_default();
     let market = state.db.collection::<Document>("possession_markets");
