@@ -62,7 +62,7 @@ async fn market_snapshot(state: &AppState, fixture_id: &str, channel_id: &str, v
             "created_at": row.get_datetime("created_at").ok().map(|v| v.to_chrono().to_rfc3339()),
         }));
     }
-    let mut pc = pokes.find(doc! { "fixture_id": fixture_id, "channel_id": channel_id }).await.map_err(AppError::MongoDB)?;
+    let mut pc = pokes.find(doc! { "fixture_id": fixture_id, "channel_id": channel_id, "status": { "$in": ["open", "matched"] } }).await.map_err(AppError::MongoDB)?;
     let mut poke_rows = Vec::new();
     while let Some(row) = pc.next().await {
         let row = row.map_err(AppError::MongoDB)?;
