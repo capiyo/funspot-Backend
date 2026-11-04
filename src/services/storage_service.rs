@@ -73,6 +73,7 @@ impl StorageService {
     fn image_content_type(file_extension: &str) -> &'static str {
         match file_extension.to_lowercase().as_str() {
             "png" => "image/png",
+            "webp" => "image/webp",
             "gif" => "image/gif",
             _ => "image/jpeg",
         }
