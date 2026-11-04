@@ -37,13 +37,16 @@ fn validate_side(side: &str) -> Result<(), AppError> {
 fn id(value: &str) -> Result<ObjectId, AppError> {
     ObjectId::parse_str(value).map_err(|e| AppError::InvalidObjectId(e.to_string()))
 }
-fn verify_actor(headers: &HeaderMap, user_id: &str) -> Result<(), AppError> {
+fn authenticated_user(headers: &HeaderMap) -> Result<String, AppError> {
     let token = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer ")).ok_or(AppError::Unauthorized)?;
     let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
     let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &Validation::default())
         .map_err(|_| AppError::Unauthorized)?.claims;
-    if claims.sub == user_id { Ok(()) } else { Err(AppError::Unauthorized) }
+    Ok(claims.sub)
+}
+fn verify_actor(headers: &HeaderMap, user_id: &str) -> Result<(), AppError> {
+    if authenticated_user(headers)? == user_id { Ok(()) } else { Err(AppError::Unauthorized) }
 }
 async fn require_member(state: &AppState, channel_id: &str, user_id: &str, headers: &HeaderMap) -> Result<(), AppError> {
     verify_actor(headers, user_id)?;
@@ -109,16 +112,19 @@ async fn market_snapshot(state: &AppState, fixture_id: &str, channel_id: &str, v
     }))
 }
 
-pub async fn get_possession_market(State(state): State<AppState>, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
-    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, None).await?;
+pub async fn get_possession_market(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
+    let viewer = authenticated_user(&headers)?; require_member(&state, &q.channel_id, &viewer, &headers).await?;
+    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&viewer)).await?;
     Ok(Json(json!({ "success": true, "market": data })))
 }
-pub async fn get_possession_votes(State(state): State<AppState>, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
-    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, None).await?;
+pub async fn get_possession_votes(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
+    let viewer = authenticated_user(&headers)?; require_member(&state, &q.channel_id, &viewer, &headers).await?;
+    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&viewer)).await?;
     Ok(Json(json!({ "success": true, "votes": data["votes"] })))
 }
-pub async fn get_possession_pokes(State(state): State<AppState>, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
-    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, None).await?;
+pub async fn get_possession_pokes(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PossessionQuery>) -> Result<Json<Value>, AppError> {
+    let viewer = authenticated_user(&headers)?; require_member(&state, &q.channel_id, &viewer, &headers).await?;
+    let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, Some(&viewer)).await?;
     Ok(Json(json!({ "success": true, "pokes": data["pokes"] })))
 }
 pub async fn cast_possession_vote(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PossessionVoteRequest>) -> Result<Json<Value>, AppError> {
