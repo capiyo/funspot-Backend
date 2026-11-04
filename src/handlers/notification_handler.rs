@@ -3,11 +3,11 @@ use axum::{
     http::HeaderMap,
     response::Json,
 };
-use jsonwebtoken::{decode, DecodingKey, Validation};
 use mongodb::{Collection, bson::{doc, oid::ObjectId, DateTime as BsonDateTime}};
 use serde_json::json;
 use futures_util::TryStreamExt;
 
+use crate::auth::{authorize_admin, authorize_user};
 use crate::{
     errors::{AppError, Result},
     models::notification::{
@@ -16,64 +16,8 @@ use crate::{
         NotificationPreferences, UnregisterTokenRequest,
     },
     state::AppState,
-    models::user::Claims,
 };
 
-
-/// Decode the same HS256 bearer token issued by the existing login handlers.
-/// Missing or weak JWT configuration fails closed; never accept the historical
-/// literal-secret fallback for notification access.
-fn authenticated_claims(headers: &HeaderMap) -> Result<Claims> {
-    let token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|value| !value.is_empty())
-        .ok_or(AppError::AuthError)?;
-
-    let secret = std::env::var("JWT_SECRET")
-        .map_err(|_| AppError::ConfigurationError("JWT_SECRET is not configured".to_string()))?;
-    if secret.len() < 32 {
-        return Err(AppError::ConfigurationError(
-            "JWT_SECRET must contain at least 32 bytes".to_string(),
-        ));
-    }
-
-    decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
-    )
-    .map(|token| token.claims)
-    .map_err(|_| AppError::AuthError)
-}
-
-fn authorize_claim_subject(claims: &Claims, user_id: &str) -> Result<()> {
-    if claims.sub != user_id {
-        return Err(AppError::Unauthorized);
-    }
-    Ok(())
-}
-
-fn authorize_user(headers: &HeaderMap, user_id: &str) -> Result<()> {
-    let claims = authenticated_claims(headers)?;
-    authorize_claim_subject(&claims, user_id)
-}
-
-async fn authorize_admin(state: &AppState, headers: &HeaderMap) -> Result<()> {
-    let claims = authenticated_claims(headers)?;
-    let user_id = ObjectId::parse_str(&claims.sub)
-        .map_err(|_| AppError::AuthError)?;
-    let users: Collection<mongodb::bson::Document> = state.db.collection("users");
-    let admin = users
-        .find_one(doc! { "_id": user_id, "is_admin": true })
-        .await
-        .map_err(|error| AppError::InternalServerError(format!("Database error: {}", error)))?;
-    if admin.is_none() {
-        return Err(AppError::Unauthorized);
-    }
-    Ok(())
-}
 
 // Register FCM token for a user
 pub async fn register_token(
@@ -498,23 +442,3 @@ pub async fn get_user_token_status(
     })))
 }
 
-#[cfg(test)]
-mod authorization_tests {
-    use super::authorize_claim_subject;
-    use crate::models::user::Claims;
-
-    fn claims(subject: &str) -> Claims {
-        Claims {
-            sub: subject.to_string(),
-            username: "test-user".to_string(),
-            phone: "700000000".to_string(),
-            exp: (chrono::Utc::now().timestamp() + 60) as usize,
-        }
-    }
-
-    #[test]
-    fn user_can_only_access_own_notification_resources() {
-        assert!(authorize_claim_subject(&claims("user-a"), "user-a").is_ok());
-        assert!(authorize_claim_subject(&claims("user-a"), "user-b").is_err());
-    }
-}
