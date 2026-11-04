@@ -76,7 +76,7 @@ async fn market_snapshot(state: &AppState, fixture_id: &str, channel_id: &str, v
             "created_at": row.get_datetime("created_at").ok().map(|v| v.to_chrono().to_rfc3339()),
         }));
     }
-    let mut pc = pokes.find(doc! { "fixture_id": fixture_id, "channel_id": channel_id, "status": { "$in": ["open", "matched"] } }).await.map_err(AppError::MongoDB)?;
+    let mut pc = pokes.find(doc! { "fixture_id": fixture_id, "channel_id": channel_id, "status": { "$in": ["open", "matched", "settled"] } }).await.map_err(AppError::MongoDB)?;
     let mut poke_rows = Vec::new();
     while let Some(row) = pc.next().await {
         let row = row.map_err(AppError::MongoDB)?;
@@ -155,6 +155,8 @@ pub async fn create_possession_poke(State(state): State<AppState>, headers: Head
     if p.amount < 5 { return Err(AppError::ValidationError("Minimum possession poke is 5 points".into())); }
     let user_oid = id(&p.user_id)?;
     let users: Collection<Document> = state.db.collection("users");
+    let user = users.find_one(doc! { "_id": user_oid }).await.map_err(AppError::MongoDB)?.ok_or(AppError::UserNotFound)?;
+    let username = user.get_str("username").unwrap_or("Fan").to_string();
     let mut session = state.client.start_session().await.map_err(AppError::MongoDB)?;
     session.start_transaction().await.map_err(AppError::MongoDB)?;
     let debit = users.update_one(doc! { "_id": user_oid, "season_points": { "$gte": p.amount } }, doc! { "$inc": { "season_points": -p.amount } }).session(&mut session).await.map_err(AppError::MongoDB)?;
@@ -166,7 +168,7 @@ pub async fn create_possession_poke(State(state): State<AppState>, headers: Head
     let now = BsonDateTime::now();
     let inserted = pokes.insert_one(doc! {
         "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "user_id": &p.user_id,
-        "username": &p.username, "selection": &p.selection, "amount": p.amount,
+        "username": &username, "selection": &p.selection, "amount": p.amount,
         "status": "open", "created_at": now,
     }).session(&mut session).await.map_err(AppError::MongoDB)?;
     let markets: Collection<Document> = state.db.collection("possession_markets");
@@ -177,7 +179,7 @@ pub async fn create_possession_poke(State(state): State<AppState>, headers: Head
     let poke_id = inserted.inserted_id.as_object_id().map(|v| v.to_hex()).unwrap_or_default();
     let data = market_snapshot(&state, &p.fixture_id, &p.channel_id, Some(&p.user_id)).await?;
     Ok(Json(json!({ "success": true, "message": "Possession poke created", "poke": {
-        "id": poke_id, "user_id": p.user_id, "username": p.username, "selection": p.selection,
+        "id": poke_id, "user_id": p.user_id, "username": username, "selection": p.selection,
         "amount": p.amount, "status": "open", "created_at": now.to_chrono().to_rfc3339()
     }, "market": data })))
 }
