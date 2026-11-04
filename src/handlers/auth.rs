@@ -1,5 +1,5 @@
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::Utc;
@@ -13,6 +13,7 @@ use rand::Rng;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use crate::auth::verify_firebase_phone_token;
 use crate::models::user::{
     AuthResponse, Claims, CreateUserRequest, PinLoginRequest, SetPinRequest,
     UpdateUserPointsRequest, User, UserResponse,
@@ -306,8 +307,12 @@ fn generate_salt() -> String {
 
 pub async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
+    if let Err(error) = verify_firebase_phone_token(&headers, &payload.phone).await {
+        return error.into_response();
+    }
     println!("📝 Registering user with phone: {}", payload.phone);
     if let Err(msg) = validate_phone_format(&payload.phone) {
     return (
@@ -477,8 +482,12 @@ pub async fn register(
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
+    if let Err(error) = verify_firebase_phone_token(&headers, &payload.phone).await {
+        return error.into_response();
+    }
     println!("🔍 Login attempt with phone: {}", payload.phone);
 
     let collection: Collection<User> = state.db.collection("users");
@@ -556,7 +565,11 @@ pub async fn login(
 pub async fn check_user_exists(
     State(state): State<AppState>,
     Path(phone): Path<String>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
+    if let Err(error) = verify_firebase_phone_token(&headers, &phone).await {
+        return error.into_response();
+    }
     println!("🔍 Checking if user exists: {}", phone);
 
     let collection: Collection<User> = state.db.collection("users");
@@ -634,6 +647,7 @@ fn validate_phone_format(phone: &str) -> Result<(), &'static str> {
 pub async fn set_pin(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
+    headers: HeaderMap,
     Json(payload): Json<SetPinRequest>,
 ) -> impl IntoResponse {
     println!("🔐 Setting PIN for user: {}", user_id);
@@ -653,6 +667,25 @@ pub async fn set_pin(
                 .into_response();
         }
     };
+
+    let existing_user = match collection.find_one(doc! { "_id": object_id }).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "success": false, "message": "User not found" })),
+            ).into_response();
+        }
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "success": false, "message": format!("Database error: {}", error) })),
+            ).into_response();
+        }
+    };
+    if let Err(error) = verify_firebase_phone_token(&headers, &existing_user.phone).await {
+        return error.into_response();
+    }
 
     // Validate PIN format
     if payload.pin.len() != 4 || !payload.pin.chars().all(|c| c.is_ascii_digit()) {
