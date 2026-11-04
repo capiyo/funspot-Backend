@@ -44,16 +44,8 @@ async fn main() {
 fn validate_jwt_secret() {
     let secret = std::env::var("JWT_SECRET")
         .expect("JWT_SECRET must be configured before the API starts");
-    if secret.len() < 32 {
-        panic!("JWT_SECRET must contain at least 32 bytes");
-    }
-    let normalized = secret.to_ascii_lowercase();
-    if ["secret", "changeme", "change-me", "insecure-default"]
-        .iter()
-        .any(|placeholder| normalized.contains(placeholder))
-    {
-        panic!("JWT_SECRET must not contain a known placeholder value");
-    }
+    config::validate_jwt_secret(&secret)
+        .unwrap_or_else(|message| panic!("{}", message));
 }
 
 async fn create_directories() {
@@ -146,7 +138,6 @@ async fn build_router(app_state: AppState) -> Router {
         .route("/", get(root_handler))
         .route("/health", get(health_check))
         .route("/api/health", get(api_health_check))
-        .route("/debug/fcm", get(debug_fcm))
         .route("/api/simple_health_check", get(simple_health_check))
         .nest("/api/auth", routes::auth::user_routes())
         .nest("/api/games", routes::games::routes())
@@ -191,28 +182,6 @@ async fn start_server(app: Router) {
 
 async fn root_handler() -> &'static str {
     "🚀 Peer-to-Peer Betting API"
-}
-
-// Debug endpoint to test FCM
-async fn debug_fcm(State(state): State<AppState>) -> Json<Value> {
-    if let Some(fcm) = &state.fcm_service {
-        // Try to get a token to verify it's working
-        match fcm.get_access_token().await {
-            Ok(token) => Json(json!({
-                "status": "FCM working",
-                "token_prefix": &token[0..20.min(token.len())],
-                "token_length": token.len(),
-            })),
-            Err(e) => Json(json!({
-                "status": "FCM error",
-                "error": e.to_string(),
-            })),
-        }
-    } else {
-        Json(json!({
-            "status": "FCM not initialized",
-        }))
-    }
 }
 
 async fn health_check() -> Json<Value> {
