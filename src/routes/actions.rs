@@ -6,6 +6,10 @@ use axum::{
 };
 
 use crate::{
+    handlers::possession::{
+        cast_possession_vote, create_possession_poke, get_possession_market,
+        get_possession_pokes, get_possession_votes, match_possession_poke, settle_possession_market,
+    },
     handlers::actions::{
         cast_vote_handler, check_user_vote_handler, create_bet_handler, create_poke_handler,
         fill_bet_handler, fill_poke_handler, get_channel_bettors_handler,
@@ -20,6 +24,12 @@ use crate::{
 
 pub fn actions_routes() -> Router<AppState> {
     Router::new()
+        // Possession has its own collections and never calls main vote/poke handlers.
+        .route("/posseions", get(get_possession_market))
+        .route("/posseions/votes", get(get_possession_votes).post(cast_possession_vote))
+        .route("/posseions/poking", get(get_possession_pokes).post(create_possession_poke))
+        .route("/posseions/poking/match", post(match_possession_poke))
+        .route("/posseions/settlement", post(settle_possession_market))
         // ============================================================
         // VOTES (Global storage, filtered by channel membership)
         // ============================================================
