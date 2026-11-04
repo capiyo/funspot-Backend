@@ -1,8 +1,12 @@
 use axum::{
     extract::{State, Query, Path},
+    http::HeaderMap,
     response::Json,
 };
 use serde::Deserialize;
+use axum_extra::extract::Multipart;
+use jsonwebtoken::{decode, DecodingKey, Validation};
+use crate::models::user::Claims;
 use mongodb::bson::{doc, oid::ObjectId, DateTime as BsonDateTime};
 use chrono::Utc;
 use mongodb::Collection;
@@ -413,4 +417,107 @@ pub async fn create_user_profile(
     println!("✅ CREATE_USER_PROFILE completed for: {}", user_profile.username);
     println!("═══════════════════════════════════════════");
     Ok(Json(user_profile))
+}
+
+/// Upload and persist the authenticated user's canonical profile avatar.
+pub async fn upload_profile_avatar(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>> {
+    const MAX_AVATAR_BYTES: usize = 8 * 1024 * 1024;
+
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(AppError::AuthError)?;
+    let token = authorization
+        .strip_prefix("Bearer ")
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(AppError::AuthError)?;
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
+    let claims = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::default(),
+    )
+    .map_err(|_| AppError::AuthError)?
+    .claims;
+
+    if claims.sub != user_id {
+        return Err(AppError::Unauthorized);
+    }
+
+    let account_id = ObjectId::parse_str(&user_id).map_err(|_| AppError::AuthError)?;
+    let users = state.db.collection::<mongodb::bson::Document>("users");
+    if users.find_one(doc! { "_id": account_id }).await?.is_none() {
+        return Err(AppError::AuthError);
+    }
+
+    let mut image_bytes: Option<Vec<u8>> = None;
+    while let Some(field) = multipart.next_field().await? {
+        if field.name() != Some("image") {
+            continue;
+        }
+        let bytes = field.bytes().await.map_err(|error| {
+            AppError::Multipart(format!("Unable to read avatar image: {}", error))
+        })?;
+        if bytes.is_empty() {
+            return Err(AppError::NoImageProvided);
+        }
+        if bytes.len() > MAX_AVATAR_BYTES {
+            return Err(AppError::ImageTooLarge);
+        }
+        image_bytes = Some(bytes.to_vec());
+        break;
+    }
+
+    let image_bytes = image_bytes.ok_or(AppError::NoImageProvided)?;
+    let detected = infer::get(&image_bytes).ok_or(AppError::InvalidImageFormat)?;
+    let extension = match detected.mime_type() {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        _ => return Err(AppError::InvalidImageFormat),
+    };
+
+    let (avatar_url, _) = state
+        .storage_service
+        .upload_image(&image_bytes, &user_id, extension)
+        .await?;
+
+    if !avatar_url.starts_with("https://") {
+        return Err(AppError::service("Avatar storage returned a non-HTTPS URL"));
+    }
+
+    let profiles = state.db.collection::<mongodb::bson::Document>("user_profiles");
+    let now = BsonDateTime::from_chrono(Utc::now());
+    let update = doc! {
+        "$set": {
+            "avatar_url": &avatar_url,
+            "updated_at": now,
+        },
+        "$setOnInsert": {
+            "user_id": &user_id,
+            "username": &claims.username,
+            "phone": &claims.phone,
+            "nickname": "",
+            "club_fan": "",
+            "country_fan": "",
+            "balance": 0.0,
+            "number_of_bets": 0,
+            "created_at": now,
+        }
+    };
+    profiles
+        .update_one(doc! { "user_id": &user_id }, update)
+        .upsert(true)
+        .await?;
+
+    tracing::info!("Profile avatar updated for user {}", user_id);
+    Ok(Json(json!({
+        "success": true,
+        "avatar_url": avatar_url
+    })))
 }
