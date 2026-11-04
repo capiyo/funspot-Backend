@@ -7,6 +7,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber;
 
 mod config;
+mod auth;
 mod database;
 mod dumper;
 mod errors;
