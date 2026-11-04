@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post, put, delete},
+    routing::{get, post, put},
     Router,
 };
 use crate::handlers::notification_handler::{
