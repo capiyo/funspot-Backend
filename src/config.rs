@@ -177,3 +177,27 @@ impl AppConfig {
         }
     }
 }
+
+
+#[cfg(test)]
+mod jwt_secret_tests {
+    use super::validate_jwt_secret;
+
+    #[test]
+    fn accepts_a_strong_non_placeholder_secret() {
+        assert!(validate_jwt_secret("a-strong-production-secret-with-at-least-32-bytes").is_ok());
+    }
+
+    #[test]
+    fn rejects_missing_or_short_secret() {
+        assert!(validate_jwt_secret("").is_err());
+        assert!(validate_jwt_secret("short-secret").is_err());
+    }
+
+    #[test]
+    fn rejects_known_placeholder_secrets() {
+        assert!(validate_jwt_secret("secret-secret-secret-secret-secret-secret").is_err());
+        assert!(validate_jwt_secret("change-me-production-key-which-is-long-enough").is_err());
+        assert!(validate_jwt_secret("insecure-default-change-me-in-production").is_err());
+    }
+}
