@@ -23,6 +23,7 @@ use state::AppState;
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+    validate_jwt_secret();
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -38,6 +39,21 @@ async fn main() {
 
     let app = build_router(app_state).await;
     start_server(app).await;
+}
+
+fn validate_jwt_secret() {
+    let secret = std::env::var("JWT_SECRET")
+        .expect("JWT_SECRET must be configured before the API starts");
+    if secret.len() < 32 {
+        panic!("JWT_SECRET must contain at least 32 bytes");
+    }
+    let normalized = secret.to_ascii_lowercase();
+    if ["secret", "changeme", "change-me", "insecure-default"]
+        .iter()
+        .any(|placeholder| normalized.contains(placeholder))
+    {
+        panic!("JWT_SECRET must not contain a known placeholder value");
+    }
 }
 
 async fn create_directories() {
