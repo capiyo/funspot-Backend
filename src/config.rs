@@ -1,3 +1,39 @@
+/// Validate the signing secret shared by login and authenticated API routes.
+pub fn validate_jwt_secret(secret: &str) -> Result<(), &'static str> {
+    if secret.len() < 32 {
+        return Err("JWT_SECRET must contain at least 32 bytes");
+    }
+    let normalized = secret.to_ascii_lowercase();
+    if ["secret", "changeme", "change-me", "insecure-default"]
+        .iter()
+        .any(|placeholder| normalized.contains(placeholder))
+    {
+        return Err("JWT_SECRET must not contain a known placeholder value");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod jwt_secret_tests {
+    use super::validate_jwt_secret;
+
+    #[test]
+    fn rejects_missing_length_secrets() {
+        assert!(validate_jwt_secret("too-short").is_err());
+    }
+
+    #[test]
+    fn rejects_placeholder_secrets() {
+        assert!(validate_jwt_secret("insecure-default-0123456789abcdef").is_err());
+        assert!(validate_jwt_secret("please-changeme-0123456789abcdef").is_err());
+    }
+
+    #[test]
+    fn accepts_a_long_random_looking_secret() {
+        assert!(validate_jwt_secret("7e4c9a1f0d2b6c8e3a5f7b9d1c4e6a8f").is_ok());
+    }
+}
+
 use std::env;
 
 /// Central app configuration — loaded once at startup from environment variables.
@@ -38,9 +74,8 @@ impl AppConfig {
         // ── Core ──────────────────────────────────────────────────────────────
         let jwt_secret = env::var("JWT_SECRET")
             .expect("JWT_SECRET must be configured before the API starts");
-        if jwt_secret.len() < 32 {
-            panic!("JWT_SECRET must contain at least 32 bytes");
-        }
+        validate_jwt_secret(&jwt_secret)
+            .unwrap_or_else(|message| panic!("{}", message));
 
         // ── SMS ───────────────────────────────────────────────────────────────
         let sms_api_key = env::var("SMS_API_KEY").unwrap_or_else(|_| {
