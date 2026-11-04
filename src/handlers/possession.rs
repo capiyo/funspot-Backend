@@ -210,9 +210,6 @@ pub async fn settle_possession_market(State(state): State<AppState>, Json(p): Js
     }
     let winner = if home > away { "home" } else if away > home { "away" } else { "draw" };
     let market_col: Collection<Document> = state.db.collection("possession_markets");
-    let existing = market_col.find_one(doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": "settled" }).await.map_err(AppError::MongoDB)?;
-    if existing.is_some() { return Err(AppError::ValidationError("Possession market is already settled".into())); }
-    let market_col: Collection<Document> = state.db.collection("possession_markets");
     let claim = market_col.update_one(
         doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": { "$nin": ["settled", "settling"] } },
         doc! { "$set": { "status": "settling", "home_possession": home, "away_possession": away } }
@@ -266,7 +263,7 @@ pub async fn settle_possession_market(State(state): State<AppState>, Json(p): Js
     market_col.update_one(doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": "settling" },
         doc! { "$set": { "status": "settled", "home_possession": home, "away_possession": away,
         "settlement": { "winner": winner, "home_possession": home, "away_possession": away, "settled_at": BsonDateTime::now() } } })
-        .upsert(true).await.map_err(AppError::MongoDB)?;
+        .await.map_err(AppError::MongoDB)?;
     let data = market_snapshot(&state, &p.fixture_id, &p.channel_id, None).await?;
     Ok(Json(json!({ "success": true, "message": "Possession market settled", "market": data })))
 }
