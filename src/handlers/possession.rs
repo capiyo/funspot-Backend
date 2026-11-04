@@ -1,8 +1,10 @@
 use crate::{errors::AppError, models::channel::Channel, AppState};
-use axum::{extract::{Query, State}, Json};
+use axum::{extract::{Query, State}, http::HeaderMap, Json};
 use bson::{doc, oid::ObjectId, DateTime as BsonDateTime, Document, Bson};
 use futures_util::StreamExt;
 use mongodb::Collection;
+use jsonwebtoken::{decode, DecodingKey, Validation};
+use crate::models::user::Claims;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -35,7 +37,16 @@ fn validate_side(side: &str) -> Result<(), AppError> {
 fn id(value: &str) -> Result<ObjectId, AppError> {
     ObjectId::parse_str(value).map_err(|e| AppError::InvalidObjectId(e.to_string()))
 }
-async fn require_member(state: &AppState, channel_id: &str, user_id: &str) -> Result<(), AppError> {
+fn verify_actor(headers: &HeaderMap, user_id: &str) -> Result<(), AppError> {
+    let token = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer ")).ok_or(AppError::Unauthorized)?;
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
+    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &Validation::default())
+        .map_err(|_| AppError::Unauthorized)?.claims;
+    if claims.sub == user_id { Ok(()) } else { Err(AppError::Unauthorized) }
+}
+async fn require_member(state: &AppState, channel_id: &str, user_id: &str, headers: &HeaderMap) -> Result<(), AppError> {
+    verify_actor(headers, user_id)?;
     let channels: Collection<Channel> = state.db.collection("channels");
     let channel = channels.find_one(doc! { "channel_id": channel_id }).await.map_err(AppError::MongoDB)?
         .ok_or(AppError::DocumentNotFound)?;
@@ -110,8 +121,8 @@ pub async fn get_possession_pokes(State(state): State<AppState>, Query(q): Query
     let data = market_snapshot(&state, &q.fixture_id, &q.channel_id, None).await?;
     Ok(Json(json!({ "success": true, "pokes": data["pokes"] })))
 }
-pub async fn cast_possession_vote(State(state): State<AppState>, Json(p): Json<PossessionVoteRequest>) -> Result<Json<Value>, AppError> {
-    validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id).await?;
+pub async fn cast_possession_vote(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PossessionVoteRequest>) -> Result<Json<Value>, AppError> {
+    validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
     let users: Collection<Document> = state.db.collection("users");
     let user = users.find_one(doc! { "_id": id(&p.user_id)? }).await.map_err(AppError::MongoDB)?.ok_or(AppError::UserNotFound)?;
     let username = user.get_str("username").unwrap_or(&p.username).to_string();
@@ -133,7 +144,7 @@ pub async fn cast_possession_vote(State(state): State<AppState>, Json(p): Json<P
         "id": vote_id, "user_id": p.user_id, "username": username, "selection": p.selection, "created_at": now.to_chrono().to_rfc3339()
     }, "market": data })))
 }
-pub async fn create_possession_poke(State(state): State<AppState>, Json(p): Json<PossessionPokeRequest>) -> Result<Json<Value>, AppError> {
+pub async fn create_possession_poke(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PossessionPokeRequest>) -> Result<Json<Value>, AppError> {
     validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id).await?;
     if p.amount < 5 { return Err(AppError::ValidationError("Minimum possession poke is 5 points".into())); }
     let user_oid = id(&p.user_id)?;
@@ -164,7 +175,7 @@ pub async fn create_possession_poke(State(state): State<AppState>, Json(p): Json
         "amount": p.amount, "status": "open", "created_at": now.to_chrono().to_rfc3339()
     }, "market": data })))
 }
-pub async fn match_possession_poke(State(state): State<AppState>, Json(p): Json<MatchPossessionPokeRequest>) -> Result<Json<Value>, AppError> {
+pub async fn match_possession_poke(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<MatchPossessionPokeRequest>) -> Result<Json<Value>, AppError> {
     require_member(&state, &p.channel_id, &p.user_id).await?;
     let poke_oid = id(&p.poke_id)?; let user_oid = id(&p.user_id)?;
     let pokes: Collection<Document> = state.db.collection("possession_pokes");
