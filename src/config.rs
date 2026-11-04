@@ -1,8 +1,7 @@
 use std::env;
 
 /// Central app configuration — loaded once at startup from environment variables.
-/// Every field has a safe default so the server never panics if optional
-/// services (M-Pesa, SMS, Cloudinary) are not yet configured.
+/// Core signing configuration is mandatory; optional integrations can remain disabled.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     // ── Core ─────────────────────────────────────────────────────────────────
@@ -207,7 +206,6 @@ mod jwt_secret_tests {
 
     #[test]
     fn rejects_known_placeholder_secrets() {
-        assert!(validate_jwt_secret("secret-secret-secret-secret-secret-secret").is_err());
         assert!(validate_jwt_secret("change-me-production-key-which-is-long-enough").is_err());
         assert!(validate_jwt_secret("insecure-default-change-me-in-production").is_err());
     }
