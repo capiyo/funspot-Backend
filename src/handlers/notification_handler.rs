@@ -48,12 +48,16 @@ fn authenticated_claims(headers: &HeaderMap) -> Result<Claims> {
     .map_err(|_| AppError::AuthError)
 }
 
-fn authorize_user(headers: &HeaderMap, user_id: &str) -> Result<()> {
-    let claims = authenticated_claims(headers)?;
+fn authorize_claim_subject(claims: &Claims, user_id: &str) -> Result<()> {
     if claims.sub != user_id {
         return Err(AppError::Unauthorized);
     }
     Ok(())
+}
+
+fn authorize_user(headers: &HeaderMap, user_id: &str) -> Result<()> {
+    let claims = authenticated_claims(headers)?;
+    authorize_claim_subject(&claims, user_id)
 }
 
 async fn authorize_admin(state: &AppState, headers: &HeaderMap) -> Result<()> {
@@ -492,4 +496,25 @@ pub async fn get_user_token_status(
             })
         }).collect::<Vec<_>>(),
     })))
+}
+
+#[cfg(test)]
+mod authorization_tests {
+    use super::authorize_claim_subject;
+    use crate::models::user::Claims;
+
+    fn claims(subject: &str) -> Claims {
+        Claims {
+            sub: subject.to_string(),
+            username: "test-user".to_string(),
+            phone: "700000000".to_string(),
+            exp: (chrono::Utc::now().timestamp() + 60) as usize,
+        }
+    }
+
+    #[test]
+    fn user_can_only_access_own_notification_resources() {
+        assert!(authorize_claim_subject(&claims("user-a"), "user-a").is_ok());
+        assert!(authorize_claim_subject(&claims("user-a"), "user-b").is_err());
+    }
 }
