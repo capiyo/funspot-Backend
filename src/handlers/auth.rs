@@ -256,7 +256,7 @@ pub struct DeleteByUsernameRequest {
 // HELPER: Generate JWT Token
 // ============================================================================
 
-fn generate_token(user_id: &str, username: &str, phone: &str) -> String {
+fn generate_token(user_id: &str, username: &str, phone: &str) -> Result<String, String> {
     let claims = Claims {
         sub: user_id.to_string(),
         username: username.to_string(),
@@ -264,14 +264,16 @@ fn generate_token(user_id: &str, username: &str, phone: &str) -> String {
         exp: (Utc::now().timestamp() + 86400) as usize,
     };
 
-    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
+    let secret = std::env::var("JWT_SECRET")
+        .map_err(|_| "JWT_SECRET is not configured".to_string())?;
+    crate::config::validate_jwt_secret(&secret)?;
 
     encode(
         &Header::default(),
         &claims,
         &EncodingKey::from_secret(secret.as_ref()),
     )
-    .unwrap_or_else(|_| "".to_string())
+    .map_err(|error| format!("Failed to sign authentication token: {}", error))
 }
 
 // ============================================================================
@@ -438,11 +440,20 @@ pub async fn register(
                 has_pin: is_pin_enabled,
             };
 
-            let token = generate_token(
+            let token = match generate_token(
                 &user_response.id,
                 &user_response.username,
                 &user_response.phone,
-            );
+            ) {
+                Ok(token) => token,
+                Err(error) => {
+                    tracing::error!("Failed to issue authentication token: {}", error);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "success": false, "message": "Unable to create secure session" })),
+                    ).into_response();
+                }
+            };
 
             (
                 StatusCode::CREATED,
@@ -505,11 +516,20 @@ pub async fn login(
                 has_pin: user.is_pin_enabled,
             };
 
-            let token = generate_token(
+            let token = match generate_token(
                 &user_response.id,
                 &user_response.username,
                 &user_response.phone,
-            );
+            ) {
+                Ok(token) => token,
+                Err(error) => {
+                    tracing::error!("Failed to issue authentication token: {}", error);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "success": false, "message": "Unable to create secure session" })),
+                    ).into_response();
+                }
+            };
 
             (
                 StatusCode::OK,
@@ -829,11 +849,20 @@ pub async fn pin_login(
                 has_pin: true,
             };
 
-            let token = generate_token(
+            let token = match generate_token(
                 &user_response.id,
                 &user_response.username,
                 &user_response.phone,
-            );
+            ) {
+                Ok(token) => token,
+                Err(error) => {
+                    tracing::error!("Failed to issue authentication token: {}", error);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "success": false, "message": "Unable to create secure session" })),
+                    ).into_response();
+                }
+            };
 
             (
                 StatusCode::OK,
