@@ -38,11 +38,19 @@ pub fn validate_jwt_secret(secret: &str) -> Result<(), String> {
         return Err("JWT_SECRET must contain at least 32 non-whitespace bytes".to_string());
     }
     let lower = normalized.to_ascii_lowercase();
-    if ["secret", "changeme", "change-me", "insecure-default", "your-secret"]
-        .iter()
-        .any(|placeholder| lower.contains(placeholder))
+    if [
+        "secret",
+        "changeme",
+        "change-me",
+        "insecure-default-change-me-in-production",
+        "your-secret",
+        "your_secret",
+        "password",
+    ]
+    .iter()
+    .any(|placeholder| lower == *placeholder)
     {
-        return Err("JWT_SECRET must not contain a known placeholder value".to_string());
+        return Err("JWT_SECRET must not be a known placeholder value".to_string());
     }
     Ok(())
 }
