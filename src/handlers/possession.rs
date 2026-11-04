@@ -208,6 +208,14 @@ pub async fn settle_possession_market(State(state): State<AppState>, Json(p): Js
     let market_col: Collection<Document> = state.db.collection("possession_markets");
     let existing = market_col.find_one(doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": "settled" }).await.map_err(AppError::MongoDB)?;
     if existing.is_some() { return Err(AppError::ValidationError("Possession market is already settled".into())); }
+    let market_col: Collection<Document> = state.db.collection("possession_markets");
+    let claim = market_col.update_one(
+        doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": { "$nin": ["settled", "settling"] } },
+        doc! { "$set": { "status": "settling", "home_possession": home, "away_possession": away } }
+    ).upsert(true).await.map_err(AppError::MongoDB)?;
+    if claim.matched_count == 0 && claim.upserted_id.is_none() {
+        return Err(AppError::ValidationError("Possession market is already settling or settled".into()));
+    }
     let pokes: Collection<Document> = state.db.collection("possession_pokes");
     let mut cursor = pokes.find(doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": "matched" }).await.map_err(AppError::MongoDB)?;
     while let Some(row) = cursor.next().await {
@@ -236,7 +244,22 @@ pub async fn settle_possession_market(State(state): State<AppState>, Json(p): Js
         }}).session(&mut session).await.map_err(AppError::MongoDB)?;
         session.commit_transaction().await.map_err(AppError::MongoDB)?;
     }
-    market_col.update_one(doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": { "$ne": "settled" } },
+    let mut open_cursor = pokes.find(doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": "open" }).await.map_err(AppError::MongoDB)?;
+    while let Some(open_row) = open_cursor.next().await {
+        let open_row = open_row.map_err(AppError::MongoDB)?;
+        let starter_id = open_row.get_str("user_id").unwrap_or_default();
+        let stake = open_row.get_i32("amount").unwrap_or(0);
+        let oid = id(starter_id)?;
+        let mut session = state.client.start_session().await.map_err(AppError::MongoDB)?;
+        session.start_transaction().await.map_err(AppError::MongoDB)?;
+        let users: Collection<Document> = state.db.collection("users");
+        let channels: Collection<Document> = state.db.collection("channels");
+        users.update_one(doc! { "_id": oid }, doc! { "$inc": { "season_points": stake } }).session(&mut session).await.map_err(AppError::MongoDB)?;
+        channels.update_many(doc! { "members.user_id": starter_id }, doc! { "$inc": { "members.$[m].season_points": stake } }).array_filters(vec![doc! { "m.user_id": starter_id }]).session(&mut session).await.map_err(AppError::MongoDB)?;
+        pokes.update_one(doc! { "_id": open_row.get_object_id("_id").map_err(|_| AppError::DocumentNotFound)?, "status": "open" }, doc! { "$set": { "status": "refunded", "starter_result": "unmatched", "settled_at": BsonDateTime::now() } }).session(&mut session).await.map_err(AppError::MongoDB)?;
+        session.commit_transaction().await.map_err(AppError::MongoDB)?;
+    }
+    market_col.update_one(doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": "settling" },
         doc! { "$set": { "status": "settled", "home_possession": home, "away_possession": away,
         "settlement": { "winner": winner, "home_possession": home, "away_possession": away, "settled_at": BsonDateTime::now() } } })
         .upsert(true).await.map_err(AppError::MongoDB)?;
