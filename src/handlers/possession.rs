@@ -162,6 +162,7 @@ pub async fn cast_possession_vote(State(state): State<AppState>, headers: Header
 }
 pub async fn create_possession_poke(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PossessionPokeRequest>) -> Result<Json<Value>, AppError> {
     validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
+    ensure_market_open(&state, &p.fixture_id, &p.channel_id).await?;
     if p.amount < 5 { return Err(AppError::ValidationError("Minimum possession poke is 5 points".into())); }
     let user_oid = id(&p.user_id)?;
     let users: Collection<Document> = state.db.collection("users");
