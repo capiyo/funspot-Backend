@@ -54,38 +54,43 @@ pub async fn verify_firebase_phone_token(headers: &HeaderMap, expected_phone: &s
 
     let decoding_key = {
         let cache = firebase_jwks_cache();
-        {
+        let cached_key = {
             let cached = cache.read().await;
-            if let Some(cached) = cached.as_ref().filter(|entry| entry.expires_at > Instant::now()) {
-                let jwk = cached.keys.find(kid).ok_or(AppError::AuthError)?;
-                DecodingKey::from_jwk(jwk).map_err(|_| AppError::AuthError)?
-            } else {
-                drop(cached);
-                let response = reqwest::Client::new()
-                    .get(FIREBASE_JWKS_URL)
-                    .timeout(Duration::from_secs(5))
-                    .send()
-                    .await
-                    .map_err(|error| AppError::InternalServerError(format!(
-                        "Firebase signing-key request failed: {}", error
-                    )))?
-                    .error_for_status()
-                    .map_err(|error| AppError::InternalServerError(format!(
-                        "Firebase signing-key response failed: {}", error
-                    )))?;
-                let keys: JwkSet = response.json().await.map_err(|error| {
-                    AppError::InternalServerError(format!(
-                        "Firebase signing-key response was invalid: {}", error
-                    ))
-                })?;
-                let jwk = keys.find(kid).ok_or(AppError::AuthError)?;
-                let key = DecodingKey::from_jwk(jwk).map_err(|_| AppError::AuthError)?;
-                *cache.write().await = Some(CachedFirebaseJwks {
-                    keys,
-                    expires_at: Instant::now() + FIREBASE_JWKS_TTL,
-                });
-                key
-            }
+            cached
+                .as_ref()
+                .filter(|entry| entry.expires_at > Instant::now())
+                .and_then(|entry| entry.keys.find(kid))
+                .and_then(|jwk| DecodingKey::from_jwk(jwk).ok())
+        };
+        if let Some(key) = cached_key {
+            key
+        } else {
+            // A key ID missing from a fresh cache may indicate Google's key
+            // rotation. Refresh once before rejecting the otherwise valid token.
+            let response = reqwest::Client::new()
+                .get(FIREBASE_JWKS_URL)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+                .map_err(|error| AppError::InternalServerError(format!(
+                    "Firebase signing-key request failed: {}", error
+                )))?
+                .error_for_status()
+                .map_err(|error| AppError::InternalServerError(format!(
+                    "Firebase signing-key response failed: {}", error
+                )))?;
+            let keys: JwkSet = response.json().await.map_err(|error| {
+                AppError::InternalServerError(format!(
+                    "Firebase signing-key response was invalid: {}", error
+                ))
+            })?;
+            let jwk = keys.find(kid).ok_or(AppError::AuthError)?;
+            let key = DecodingKey::from_jwk(jwk).map_err(|_| AppError::AuthError)?;
+            *cache.write().await = Some(CachedFirebaseJwks {
+                keys,
+                expires_at: Instant::now() + FIREBASE_JWKS_TTL,
+            });
+            key
         }
     };
 
