@@ -189,7 +189,10 @@ pub async fn match_possession_poke(State(state): State<AppState>, Json(p): Json<
     Ok(Json(json!({ "success": true, "message": "Possession poke matched", "market": data })))
 }
 pub async fn settle_possession_market(State(state): State<AppState>, Json(p): Json<PossessionSettlementRequest>) -> Result<Json<Value>, AppError> {
-    require_member(&state, &p.channel_id, &p.fixture_id).await.or_else(|_| Ok(()))?;
+    let configured_key = std::env::var("POSSESSION_SETTLEMENT_KEY").map_err(|_| AppError::ServiceUnavailable("Possession settlement is not configured".into()))?;
+    if configured_key.is_empty() || p.settlement_key.as_deref() != Some(configured_key.as_str()) {
+        return Err(AppError::Unauthorized);
+    }
     let games: Collection<Document> = state.db.collection("games");
     let game = games.find_one(doc! { "matchId": &p.fixture_id }).await.map_err(AppError::MongoDB)?.ok_or(AppError::DocumentNotFound)?;
     let stats = game.get_array("statistics").map_err(|_| AppError::ValidationError("No possession statistics are available yet".into()))?;
@@ -198,7 +201,7 @@ pub async fn settle_possession_market(State(state): State<AppState>, Json(p): Js
     let home = teams.get_document("home").ok().and_then(|d| d.get_f64("possession").ok());
     let away = teams.get_document("away").ok().and_then(|d| d.get_f64("possession").ok());
     let (home, away) = match (home, away) { (Some(h), Some(a)) if h.is_finite() && a.is_finite() => (h,a), _ => return Err(AppError::ValidationError("Final home and away possession statistics are not available".into())) };
-    if game.get_str("status").unwrap_or("").to_lowercase() != "finished" && game.get_str("status").unwrap_or("").to_lowercase() != "ft" {
+    if !matches!(game.get_str("status").unwrap_or("").to_lowercase().as_str(), "finished" | "ft" | "full time" | "full_time") {
         return Err(AppError::ValidationError("Possession can only be settled after the match is complete".into()));
     }
     let winner = if home > away { "home" } else if away > home { "away" } else { "draw" };
