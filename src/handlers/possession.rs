@@ -145,7 +145,7 @@ pub async fn cast_possession_vote(State(state): State<AppState>, headers: Header
     }, "market": data })))
 }
 pub async fn create_possession_poke(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PossessionPokeRequest>) -> Result<Json<Value>, AppError> {
-    validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id).await?;
+    validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
     if p.amount < 5 { return Err(AppError::ValidationError("Minimum possession poke is 5 points".into())); }
     let user_oid = id(&p.user_id)?;
     let users: Collection<Document> = state.db.collection("users");
@@ -176,7 +176,7 @@ pub async fn create_possession_poke(State(state): State<AppState>, headers: Head
     }, "market": data })))
 }
 pub async fn match_possession_poke(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<MatchPossessionPokeRequest>) -> Result<Json<Value>, AppError> {
-    require_member(&state, &p.channel_id, &p.user_id).await?;
+    require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
     let poke_oid = id(&p.poke_id)?; let user_oid = id(&p.user_id)?;
     let pokes: Collection<Document> = state.db.collection("possession_pokes");
     let users: Collection<Document> = state.db.collection("users");
