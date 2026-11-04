@@ -31,15 +31,31 @@ pub struct AppConfig {
     pub mpesa_b2c_queue_timeout_url: String,
 }
 
+/// Reject short and known-placeholder JWT secrets before the server starts.
+pub fn validate_jwt_secret(secret: &str) -> Result<(), String> {
+    let normalized = secret.trim();
+    if normalized.len() < 32 {
+        return Err("JWT_SECRET must contain at least 32 non-whitespace bytes".to_string());
+    }
+    let lower = normalized.to_ascii_lowercase();
+    if ["secret", "changeme", "change-me", "insecure-default", "your-secret"]
+        .iter()
+        .any(|placeholder| lower.contains(placeholder))
+    {
+        return Err("JWT_SECRET must not contain a known placeholder value".to_string());
+    }
+    Ok(())
+}
+
 impl AppConfig {
     /// Load all config from environment variables.
-    /// Missing optional vars emit a warning instead of panicking.
-    pub fn from_env() -> Self {
+    /// JWT signing is mandatory: startup must fail closed rather than issue
+    /// tokens with a public or placeholder secret. Other integrations remain optional.
+    pub fn from_env() -> Result<Self, String> {
         // ── Core ──────────────────────────────────────────────────────────────
-        let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| {
-            tracing::error!("❌ JWT_SECRET not set — tokens will be invalid");
-            "insecure-default-change-me-in-production".to_string()
-        });
+        let jwt_secret = env::var("JWT_SECRET")
+            .map_err(|_| "JWT_SECRET is required; refusing to start with an insecure fallback".to_string())?;
+        validate_jwt_secret(&jwt_secret)?;
 
         // ── SMS ───────────────────────────────────────────────────────────────
         let sms_api_key = env::var("SMS_API_KEY").unwrap_or_else(|_| {
@@ -99,7 +115,7 @@ impl AppConfig {
             );
         }
 
-        AppConfig {
+        Ok(AppConfig {
             jwt_secret,
             sms_api_key,
             sms_username,
@@ -115,7 +131,7 @@ impl AppConfig {
             mpesa_validation_url,
             mpesa_b2c_result_url,
             mpesa_b2c_queue_timeout_url,
-        }
+        })
     }
 
     /// True when running against the live M-Pesa production API.
