@@ -567,6 +567,10 @@ pub async fn check_user_exists(
     Path(phone): Path<String>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    if let Err(error) = verify_firebase_phone_token(&headers, &phone).await {
+        return error.into_response();
+    }
+
     println!("🔍 Checking if user exists: {}", phone);
 
     let collection: Collection<User> = state.db.collection("users");
