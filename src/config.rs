@@ -36,10 +36,11 @@ impl AppConfig {
     /// Missing optional vars emit a warning instead of panicking.
     pub fn from_env() -> Self {
         // ── Core ──────────────────────────────────────────────────────────────
-        let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| {
-            tracing::error!("❌ JWT_SECRET not set — tokens will be invalid");
-            "insecure-default-change-me-in-production".to_string()
-        });
+        let jwt_secret = env::var("JWT_SECRET")
+            .expect("JWT_SECRET must be configured before the API starts");
+        if jwt_secret.len() < 32 {
+            panic!("JWT_SECRET must contain at least 32 bytes");
+        }
 
         // ── SMS ───────────────────────────────────────────────────────────────
         let sms_api_key = env::var("SMS_API_KEY").unwrap_or_else(|_| {
