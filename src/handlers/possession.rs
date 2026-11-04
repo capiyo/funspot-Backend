@@ -56,6 +56,15 @@ async fn require_member(state: &AppState, channel_id: &str, user_id: &str, heade
     if channel.members.iter().any(|m| m.user_id == user_id) { Ok(()) }
     else { Err(AppError::Unauthorized) }
 }
+async fn ensure_market_open(state: &AppState, fixture_id: &str, channel_id: &str) -> Result<(), AppError> {
+    let markets: Collection<Document> = state.db.collection("possession_markets");
+    if let Some(market) = markets.find_one(doc! { "fixture_id": fixture_id, "channel_id": channel_id }).await.map_err(AppError::MongoDB)? {
+        if market.get_str("status").unwrap_or("open") != "open" {
+            return Err(AppError::ValidationError("This possession market is no longer open".into()));
+        }
+    }
+    Ok(())
+}
 async fn market_snapshot(state: &AppState, fixture_id: &str, channel_id: &str, viewer: Option<&str>) -> Result<Value, AppError> {
     let votes: Collection<Document> = state.db.collection("possession_votes");
     let pokes: Collection<Document> = state.db.collection("possession_pokes");
@@ -129,6 +138,7 @@ pub async fn get_possession_pokes(State(state): State<AppState>, headers: Header
 }
 pub async fn cast_possession_vote(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<PossessionVoteRequest>) -> Result<Json<Value>, AppError> {
     validate_side(&p.selection)?; require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
+    ensure_market_open(&state, &p.fixture_id, &p.channel_id).await?;
     let users: Collection<Document> = state.db.collection("users");
     let user = users.find_one(doc! { "_id": id(&p.user_id)? }).await.map_err(AppError::MongoDB)?.ok_or(AppError::UserNotFound)?;
     let username = user.get_str("username").unwrap_or(&p.username).to_string();
@@ -185,6 +195,7 @@ pub async fn create_possession_poke(State(state): State<AppState>, headers: Head
 }
 pub async fn match_possession_poke(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<MatchPossessionPokeRequest>) -> Result<Json<Value>, AppError> {
     require_member(&state, &p.channel_id, &p.user_id, &headers).await?;
+    ensure_market_open(&state, &p.fixture_id, &p.channel_id).await?;
     let poke_oid = id(&p.poke_id)?; let user_oid = id(&p.user_id)?;
     let pokes: Collection<Document> = state.db.collection("possession_pokes");
     let users: Collection<Document> = state.db.collection("users");
