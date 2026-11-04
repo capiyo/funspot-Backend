@@ -152,6 +152,10 @@ pub async fn create_possession_poke(State(state): State<AppState>, Json(p): Json
         "username": &p.username, "selection": &p.selection, "amount": p.amount,
         "status": "open", "created_at": now,
     }).session(&mut session).await.map_err(AppError::MongoDB)?;
+    let markets: Collection<Document> = state.db.collection("possession_markets");
+    markets.update_one(doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id },
+        doc! { "$setOnInsert": { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": "open", "created_at": now } })
+        .upsert(true).session(&mut session).await.map_err(AppError::MongoDB)?;
     session.commit_transaction().await.map_err(AppError::MongoDB)?;
     let poke_id = inserted.inserted_id.as_object_id().map(|v| v.to_hex()).unwrap_or_default();
     let data = market_snapshot(&state, &p.fixture_id, &p.channel_id, Some(&p.user_id)).await?;
@@ -212,8 +216,8 @@ pub async fn settle_possession_market(State(state): State<AppState>, Json(p): Js
     let claim = market_col.update_one(
         doc! { "fixture_id": &p.fixture_id, "channel_id": &p.channel_id, "status": { "$nin": ["settled", "settling"] } },
         doc! { "$set": { "status": "settling", "home_possession": home, "away_possession": away } }
-    ).upsert(true).await.map_err(AppError::MongoDB)?;
-    if claim.matched_count == 0 && claim.upserted_id.is_none() {
+    ).await.map_err(AppError::MongoDB)?;
+    if claim.matched_count == 0 {
         return Err(AppError::ValidationError("Possession market is already settling or settled".into()));
     }
     let pokes: Collection<Document> = state.db.collection("possession_pokes");
