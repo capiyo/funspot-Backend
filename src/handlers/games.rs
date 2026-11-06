@@ -1078,6 +1078,10 @@ pub struct PlayerPayload {
     pub lineup: String,
     #[serde(rename = "playerId")]
     pub player_id: Option<String>,
+    #[serde(default)]
+    pub rating: Option<f64>,
+    #[serde(rename = "imageUrl", default)]
+    pub image_url: Option<String>,
 }
 
 fn map_players(players: Vec<PlayerPayload>, default_lineup: &str) -> Vec<Player> {
@@ -1094,7 +1098,8 @@ fn map_players(players: Vec<PlayerPayload>, default_lineup: &str) -> Vec<Player>
                 p.lineup
             },
             player_id: p.player_id,
-            rating: None,
+            rating: p.rating,
+            image_url: p.image_url,
         })
         .collect()
 }
@@ -1317,24 +1322,36 @@ fn lineup_doc_to_json(doc: &LineupsDocument) -> serde_json::Value {
             "number": p.jersey_number,
             "position": p.position,
             "captain": p.captain,
+            "rating": p.rating,
+            "imageUrl": p.image_url,
+            "playerId": p.player_id,
         })).collect::<Vec<_>>(),
         "home_bench": doc.home_lineup.bench.iter().map(|p| json!({
             "name": p.name,
             "number": p.jersey_number,
             "position": p.position,
             "captain": p.captain,
+            "rating": p.rating,
+            "imageUrl": p.image_url,
+            "playerId": p.player_id,
         })).collect::<Vec<_>>(),
         "away_starting_xi": doc.away_lineup.players.iter().map(|p| json!({
             "name": p.name,
             "number": p.jersey_number,
             "position": p.position,
             "captain": p.captain,
+            "rating": p.rating,
+            "imageUrl": p.image_url,
+            "playerId": p.player_id,
         })).collect::<Vec<_>>(),
         "away_bench": doc.away_lineup.bench.iter().map(|p| json!({
             "name": p.name,
             "number": p.jersey_number,
             "position": p.position,
             "captain": p.captain,
+            "rating": p.rating,
+            "imageUrl": p.image_url,
+            "playerId": p.player_id,
         })).collect::<Vec<_>>(),
         "fetched_at": doc.fetched_at.to_chrono().to_rfc3339(),
     })
@@ -1349,6 +1366,9 @@ fn lineup_doc_to_json_simplified(doc: &LineupsDocument) -> serde_json::Value {
                 "name": p.name,
                 "number": p.jersey_number,
                 "position": p.position,
+                "rating": p.rating,
+                "imageUrl": p.image_url,
+                "playerId": p.player_id,
             })).collect::<Vec<_>>(),
         },
         "away": {
@@ -1358,6 +1378,9 @@ fn lineup_doc_to_json_simplified(doc: &LineupsDocument) -> serde_json::Value {
                 "name": p.name,
                 "number": p.jersey_number,
                 "position": p.position,
+                "rating": p.rating,
+                "imageUrl": p.image_url,
+                "playerId": p.player_id,
             })).collect::<Vec<_>>(),
         },
         "fetched_at": doc.fetched_at.to_chrono().to_rfc3339(),
@@ -2075,6 +2098,8 @@ pub async fn move_completed_to_history(
         competition_id: game.competition_id,
         home_team: game.home_team.clone(),
         away_team: game.away_team.clone(),
+        home_team_image_url: game.home_team_image_url.clone(),
+        away_team_image_url: game.away_team_image_url.clone(),
         league: game.league.clone(),
         home_win: game.home_win,
         away_win: game.away_win,
@@ -2332,6 +2357,8 @@ pub async fn cleanup_stale_completed_games(
                 competition_id: game.competition_id,
                 home_team: game.home_team.clone(),
                 away_team: game.away_team.clone(),
+                home_team_image_url: game.home_team_image_url.clone(),
+                away_team_image_url: game.away_team_image_url.clone(),
                 league: game.league.clone(),
                 home_win: game.home_win,
                 away_win: game.away_win,
