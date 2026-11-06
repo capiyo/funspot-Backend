@@ -441,10 +441,10 @@ pub async fn upload_profile_avatar(
     while let Some(field) = multipart.next_field().await? {
         match field.name() {
             Some("userId") => {
-                let submitted_user_id = field.text().await.map_err(|error| {
+                let submitted_id = field.text().await.map_err(|error| {
                     AppError::Multipart(format!("Unable to read user ID: {}", error))
                 })?;
-                if submitted_user_id != user_id {
+                if submitted_id != user_id {
                     return Err(AppError::Unauthorized);
                 }
                 submitted_user_id = true;
