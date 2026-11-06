@@ -435,6 +435,7 @@ pub async fn upload_profile_avatar(
         .ok_or(AppError::DocumentNotFound)?;
 
     let mut user_name = String::new();
+    let mut submitted_user_id = false;
 
     let mut image_bytes: Option<Vec<u8>> = None;
     while let Some(field) = multipart.next_field().await? {
@@ -446,6 +447,7 @@ pub async fn upload_profile_avatar(
                 if submitted_user_id != user_id {
                     return Err(AppError::Unauthorized);
                 }
+                submitted_user_id = true;
             }
             Some("userName") => {
                 user_name = field.text().await.map_err(|error| {
@@ -468,7 +470,7 @@ pub async fn upload_profile_avatar(
         }
     }
 
-    if user_name.trim().is_empty() {
+    if !submitted_user_id || user_name.trim().is_empty() {
         return Err(AppError::InvalidUserData);
     }
 
