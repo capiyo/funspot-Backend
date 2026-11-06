@@ -1,12 +1,9 @@
 use axum::{
     extract::{State, Query, Path},
-    http::HeaderMap,
     response::Json,
 };
 use serde_json::json;
 use axum_extra::extract::Multipart;
-use jsonwebtoken::{decode, DecodingKey, Validation};
-use crate::models::user::Claims;
 use mongodb::bson::{doc, oid::ObjectId, DateTime as BsonDateTime};
 use chrono::Utc;
 use mongodb::Collection;
@@ -421,58 +418,58 @@ pub async fn create_user_profile(
     Ok(Json(user_profile))
 }
 
-/// Upload and persist the authenticated user's canonical profile avatar.
+/// Upload and persist a profile avatar using the same multipart identity fields as post uploads.
 pub async fn upload_profile_avatar(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
-    headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>> {
     const MAX_AVATAR_BYTES: usize = 8 * 1024 * 1024;
 
-    let authorization = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .ok_or(AppError::AuthError)?;
-    let token = authorization
-        .strip_prefix("Bearer ")
-        .filter(|value| !value.trim().is_empty())
-        .ok_or(AppError::AuthError)?;
-    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
-    let claims = decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
-    )
-    .map_err(|_| AppError::AuthError)?
-    .claims;
-
-    if claims.sub != user_id {
-        return Err(AppError::Unauthorized);
-    }
-
-    let account_id = ObjectId::parse_str(&user_id).map_err(|_| AppError::AuthError)?;
+    let account_id = ObjectId::parse_str(&user_id)
+        .map_err(|_| AppError::invalid_data("Invalid user ID"))?;
     let users = state.db.collection::<mongodb::bson::Document>("users");
-    if users.find_one(doc! { "_id": account_id }).await?.is_none() {
-        return Err(AppError::AuthError);
-    }
+    let account = users
+        .find_one(doc! { "_id": account_id })
+        .await?
+        .ok_or(AppError::DocumentNotFound)?;
+
+    let mut user_name = String::new();
 
     let mut image_bytes: Option<Vec<u8>> = None;
     while let Some(field) = multipart.next_field().await? {
-        if field.name() != Some("image") {
-            continue;
-        }
-        let bytes = field.bytes().await.map_err(|error| {
-            AppError::Multipart(format!("Unable to read avatar image: {}", error))
-        })?;
+        match field.name() {
+            Some("userId") => {
+                let submitted_user_id = field.text().await.map_err(|error| {
+                    AppError::Multipart(format!("Unable to read user ID: {}", error))
+                })?;
+                if submitted_user_id != user_id {
+                    return Err(AppError::Unauthorized);
+                }
+            }
+            Some("userName") => {
+                user_name = field.text().await.map_err(|error| {
+                    AppError::Multipart(format!("Unable to read username: {}", error))
+                })?;
+            }
+            Some("image") => {
+                let bytes = field.bytes().await.map_err(|error| {
+                    AppError::Multipart(format!("Unable to read avatar image: {}", error))
+                })?;
         if bytes.is_empty() {
             return Err(AppError::NoImageProvided);
         }
         if bytes.len() > MAX_AVATAR_BYTES {
             return Err(AppError::ImageTooLarge);
         }
-        image_bytes = Some(bytes.to_vec());
-        break;
+                image_bytes = Some(bytes.to_vec());
+            }
+            _ => {}
+        }
+    }
+
+    if user_name.trim().is_empty() {
+        return Err(AppError::InvalidUserData);
     }
 
     let image_bytes = image_bytes.ok_or(AppError::NoImageProvided)?;
@@ -502,8 +499,8 @@ pub async fn upload_profile_avatar(
         },
         "$setOnInsert": {
             "user_id": &user_id,
-            "username": &claims.username,
-            "phone": &claims.phone,
+            "username": account.get_str("username").unwrap_or(&user_name),
+            "phone": account.get_str("phone").unwrap_or(""),
             "nickname": "",
             "club_fan": "",
             "country_fan": "",
