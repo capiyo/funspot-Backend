@@ -1,5 +1,5 @@
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::Utc;
@@ -13,6 +13,7 @@ use rand::Rng;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use crate::auth::{authorize_user, verify_firebase_phone_token};
 use crate::models::user::{
     AuthResponse, Claims, CreateUserRequest, PinLoginRequest, SetPinRequest,
     UpdateUserPointsRequest, User, UserResponse,
@@ -264,14 +265,17 @@ fn generate_token(user_id: &str, username: &str, phone: &str) -> String {
         exp: (Utc::now().timestamp() + 86400) as usize,
     };
 
-    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
+    // Startup validates JWT_SECRET before accepting traffic. Do not mint
+    // tokens with a development fallback or silently return an empty token.
+    let secret = std::env::var("JWT_SECRET")
+        .expect("JWT_SECRET must be configured before the API starts");
 
     encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(secret.as_ref()),
+        &EncodingKey::from_secret(secret.as_bytes()),
     )
-    .unwrap_or_else(|_| "".to_string())
+    .expect("JWT signing failed despite validated configuration")
 }
 
 // ============================================================================
@@ -303,8 +307,12 @@ fn generate_salt() -> String {
 
 pub async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
+    if let Err(error) = verify_firebase_phone_token(&headers, &payload.phone).await {
+        return error.into_response();
+    }
     println!("📝 Registering user with phone: {}", payload.phone);
     if let Err(msg) = validate_phone_format(&payload.phone) {
     return (
@@ -474,8 +482,12 @@ pub async fn register(
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
+    if let Err(error) = verify_firebase_phone_token(&headers, &payload.phone).await {
+        return error.into_response();
+    }
     println!("🔍 Login attempt with phone: {}", payload.phone);
 
     let collection: Collection<User> = state.db.collection("users");
@@ -553,7 +565,12 @@ pub async fn login(
 pub async fn check_user_exists(
     State(state): State<AppState>,
     Path(phone): Path<String>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
+    if let Err(error) = verify_firebase_phone_token(&headers, &phone).await {
+        return error.into_response();
+    }
+
     println!("🔍 Checking if user exists: {}", phone);
 
     let collection: Collection<User> = state.db.collection("users");
@@ -631,6 +648,7 @@ fn validate_phone_format(phone: &str) -> Result<(), &'static str> {
 pub async fn set_pin(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
+    headers: HeaderMap,
     Json(payload): Json<SetPinRequest>,
 ) -> impl IntoResponse {
     println!("🔐 Setting PIN for user: {}", user_id);
@@ -650,6 +668,10 @@ pub async fn set_pin(
                 .into_response();
         }
     };
+
+    if let Err(error) = authorize_user(&headers, &user_id) {
+        return error.into_response();
+    }
 
     // Validate PIN format
     if payload.pin.len() != 4 || !payload.pin.chars().all(|c| c.is_ascii_digit()) {

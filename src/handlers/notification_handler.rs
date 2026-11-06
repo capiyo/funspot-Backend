@@ -1,11 +1,13 @@
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     response::Json,
 };
 use mongodb::{Collection, bson::{doc, oid::ObjectId, DateTime as BsonDateTime}};
 use serde_json::json;
 use futures_util::TryStreamExt;
 
+use crate::auth::{authorize_admin, authorize_user};
 use crate::{
     errors::{AppError, Result},
     models::notification::{
@@ -16,11 +18,14 @@ use crate::{
     state::AppState,
 };
 
+
 // Register FCM token for a user
 pub async fn register_token(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<RegisterTokenRequest>,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_user(&headers, &payload.user_id)?;
     println!("📱 Registering FCM token for user: {}", payload.user_id);
 
     let collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
@@ -80,8 +85,10 @@ pub async fn register_token(
 // Remove a device token when its account signs out.
 pub async fn unregister_token(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<UnregisterTokenRequest>,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_user(&headers, &payload.user_id)?;
     let collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
     let result = collection.delete_one(doc! {
         "user_id": &payload.user_id,
@@ -98,8 +105,10 @@ pub async fn unregister_token(
 // Send notification to a specific user - FIXED to use state.fcm_service
 pub async fn send_notification(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<SendNotificationRequest>,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_admin(&state, &headers).await?;
     println!("📤 Sending notification to user: {}", payload.user_id);
     println!("📤 Type: {}, Title: {}", payload.notification_type, payload.title);
 
@@ -141,8 +150,10 @@ pub async fn send_notification(
 // Send notification to multiple users (for batch operations)
 pub async fn send_bulk_notifications(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<Vec<SendNotificationRequest>>,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_admin(&state, &headers).await?;
     let total_count = payload.len();  // ← STORE LENGTH BEFORE MOVING
     println!("📤 Sending {} bulk notifications", total_count);
 
@@ -208,7 +219,9 @@ pub async fn send_bulk_notifications(
 pub async fn get_user_notifications(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<Notification>>> {
+    authorize_user(&headers, &user_id)?;
     println!("📬 Getting notifications for user: {}", user_id);
 
     let collection: Collection<Notification> = state.db.collection("notifications");
@@ -232,8 +245,10 @@ pub async fn get_user_notifications(
 // Mark notifications as read
 pub async fn mark_notifications_read(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<MarkReadRequest>,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_user(&headers, &payload.user_id)?;
     println!("📖 Marking notifications as read for user: {}", payload.user_id);
 
     let collection: Collection<Notification> = state.db.collection("notifications");
@@ -279,7 +294,9 @@ pub async fn mark_notifications_read(
 pub async fn get_unread_summary(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_user(&headers, &user_id)?;
     let collection: Collection<Notification> = state.db.collection("notifications");
     let unread_filter = doc! { "user_id": &user_id, "is_read": false };
     let comments_filter = doc! {
@@ -309,7 +326,9 @@ pub async fn get_unread_summary(
 pub async fn get_notification_preferences(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Json<NotificationPreferences>> {
+    authorize_user(&headers, &user_id)?;
     let collection: Collection<mongodb::bson::Document> =
         state.db.collection("notification_preferences");
     let saved = collection.find_one(doc! { "user_id": &user_id }).await
@@ -330,8 +349,10 @@ pub async fn get_notification_preferences(
 
 pub async fn update_notification_preferences(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<UpdatePreferencesRequest>,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_user(&headers, &payload.user_id)?;
     let collection: Collection<mongodb::bson::Document> =
         state.db.collection("notification_preferences");
     let filter = doc! { "user_id": &payload.user_id };
@@ -360,7 +381,9 @@ pub async fn update_notification_preferences(
 // Delete expired/old tokens
 pub async fn cleanup_expired_tokens(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_admin(&state, &headers).await?;
     println!("🧹 Cleaning up old FCM tokens...");
 
     let collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
@@ -389,7 +412,9 @@ pub async fn cleanup_expired_tokens(
 pub async fn get_user_token_status(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
+    authorize_admin(&state, &headers).await?;
     println!("🔍 Checking token status for user: {}", user_id);
 
     let collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
@@ -416,3 +441,4 @@ pub async fn get_user_token_status(
         }).collect::<Vec<_>>(),
     })))
 }
+
