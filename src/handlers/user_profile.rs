@@ -418,7 +418,10 @@ pub async fn create_user_profile(
     Ok(Json(user_profile))
 }
 
-/// Upload and persist a profile avatar using the same multipart identity fields as post uploads.
+/// Upload and persist a profile avatar through the same Firebase Storage
+/// image pipeline used by create_post. Like post creation, this endpoint uses
+/// the multipart userId/userName/image fields and does not require a Bearer
+/// header. The path user ID must match the multipart user ID.
 pub async fn upload_profile_avatar(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
@@ -426,26 +429,26 @@ pub async fn upload_profile_avatar(
 ) -> Result<Json<serde_json::Value>> {
     const MAX_AVATAR_BYTES: usize = 8 * 1024 * 1024;
 
-    let account_id = ObjectId::parse_str(&user_id)
-        .map_err(|_| AppError::invalid_data("Invalid user ID"))?;
-    let users = state.db.collection::<mongodb::bson::Document>("users");
-    let account = users
-        .find_one(doc! { "_id": account_id })
-        .await?
-        .ok_or(AppError::DocumentNotFound)?;
+    if user_id.trim().is_empty() {
+        return Err(AppError::InvalidUserData);
+    }
 
     let mut user_name = String::new();
     let mut submitted_user_id = false;
-
     let mut image_bytes: Option<Vec<u8>> = None;
-    while let Some(field) = multipart.next_field().await? {
+
+    while let Some(field) = multipart.next_field().await.map_err(|error| {
+        AppError::Multipart(format!("Unable to read avatar upload: {}", error))
+    })? {
         match field.name() {
             Some("userId") => {
                 let submitted_id = field.text().await.map_err(|error| {
                     AppError::Multipart(format!("Unable to read user ID: {}", error))
                 })?;
                 if submitted_id != user_id {
-                    return Err(AppError::Unauthorized);
+                    return Err(AppError::invalid_data(
+                        "Profile upload user ID does not match the request",
+                    ));
                 }
                 submitted_user_id = true;
             }
@@ -458,12 +461,12 @@ pub async fn upload_profile_avatar(
                 let bytes = field.bytes().await.map_err(|error| {
                     AppError::Multipart(format!("Unable to read avatar image: {}", error))
                 })?;
-        if bytes.is_empty() {
-            return Err(AppError::NoImageProvided);
-        }
-        if bytes.len() > MAX_AVATAR_BYTES {
-            return Err(AppError::ImageTooLarge);
-        }
+                if bytes.is_empty() {
+                    return Err(AppError::NoImageProvided);
+                }
+                if bytes.len() > MAX_AVATAR_BYTES {
+                    return Err(AppError::ImageTooLarge);
+                }
                 image_bytes = Some(bytes.to_vec());
             }
             _ => {}
@@ -483,7 +486,9 @@ pub async fn upload_profile_avatar(
         _ => return Err(AppError::InvalidImageFormat),
     };
 
-    let (avatar_url, _) = state
+    // This is the exact same storage operation used by post image uploads:
+    // images/{user_id}/{uuid}_{timestamp}.{extension} in Firebase Storage.
+    let (avatar_url, storage_path) = state
         .storage_service
         .upload_image(&image_bytes, &user_id, extension)
         .await?;
@@ -494,29 +499,35 @@ pub async fn upload_profile_avatar(
 
     let profiles = state.db.collection::<mongodb::bson::Document>("user_profiles");
     let now = BsonDateTime::from_chrono(Utc::now());
-    let update = doc! {
-        "$set": {
-            "avatar_url": &avatar_url,
-            "updated_at": now,
-        },
-        "$setOnInsert": {
-            "user_id": &user_id,
-            "username": account.get_str("username").unwrap_or(&user_name),
-            "phone": account.get_str("phone").unwrap_or(""),
-            "nickname": "",
-            "club_fan": "",
-            "country_fan": "",
-            "balance": 0.0,
-            "number_of_bets": 0,
-            "created_at": now,
-        }
-    };
     profiles
-        .update_one(doc! { "user_id": &user_id }, update)
+        .update_one(
+            doc! { "user_id": &user_id },
+            doc! {
+                "$set": {
+                    "avatar_url": &avatar_url,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "user_id": &user_id,
+                    "username": user_name.trim(),
+                    "phone": "",
+                    "nickname": "",
+                    "club_fan": "",
+                    "country_fan": "",
+                    "balance": 0.0,
+                    "number_of_bets": 0,
+                    "created_at": now,
+                }
+            },
+        )
         .upsert(true)
         .await?;
 
-    tracing::info!("Profile avatar updated for user {}", user_id);
+    tracing::info!(
+        "Profile avatar stored for user {} at {}",
+        user_id,
+        storage_path
+    );
     Ok(Json(json!({
         "success": true,
         "avatar_url": avatar_url
