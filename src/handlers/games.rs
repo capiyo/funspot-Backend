@@ -922,6 +922,70 @@ pub async fn update_game_status(
     }
 }
 
+// Resolve status updates without treating every event as proof that a match
+// has started. The poller sends "status_change" for upcoming -> soon as well
+// as soon -> live; the requested status is authoritative for that event.
+fn resolve_live_update_status(
+    event_type: &str,
+    requested_status: Option<&str>,
+) -> Result<(&'static str, bool, bool)> {
+    let status = match event_type {
+        "match_end" => "completed",
+        "half_time" | "second_half" | "live_update" | "score_update" | "score" | "goal"
+        | "card" | "substitution" | "corner" => "live",
+        "status_change" => requested_status.ok_or_else(|| {
+            AppError::invalid_data("status_change live updates must include a status")
+        })?,
+        _ => requested_status.ok_or_else(|| {
+            AppError::invalid_data("live updates with unknown event types must include a status")
+        })?,
+    };
+
+    match status {
+        "upcoming" => Ok(("upcoming", false, true)),
+        "soon" => Ok(("soon", false, true)),
+        "live" => Ok(("live", true, false)),
+        "completed" => Ok(("completed", false, false)),
+        _ => Err(AppError::invalid_data(
+            "Invalid live update status. Must be upcoming, soon, live, or completed",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod live_update_status_tests {
+    use super::resolve_live_update_status;
+
+    #[test]
+    fn status_change_preserves_soon_state() {
+        assert_eq!(
+            resolve_live_update_status("status_change", Some("soon")).unwrap(),
+            ("soon", false, true)
+        );
+    }
+
+    #[test]
+    fn status_change_can_transition_to_live() {
+        assert_eq!(
+            resolve_live_update_status("status_change", Some("live")).unwrap(),
+            ("live", true, false)
+        );
+    }
+
+    #[test]
+    fn live_events_are_live() {
+        assert_eq!(
+            resolve_live_update_status("live_update", None).unwrap(),
+            ("live", true, false)
+        );
+    }
+
+    #[test]
+    fn unknown_events_cannot_default_to_live() {
+        assert!(resolve_live_update_status("unknown_event", None).is_err());
+    }
+}
+
 // ============================================================================
 // RECEIVE LIVE UPDATE
 // ============================================================================
@@ -939,12 +1003,8 @@ pub async fn receive_live_update(
 
     let filter = doc! { "matchId": &update.fixture_id };
 
-    let (status, is_live, available_for_voting) = match update.event_type.as_str() {
-        "match_end" => ("completed", false, false),
-        "half_time" => ("live", true, false),
-        "second_half" => ("live", true, false),
-        _ => ("live", true, false),
-    };
+    let (status, is_live, available_for_voting) =
+        resolve_live_update_status(&update.event_type, update.status.as_deref())?;
 
     let mut set_doc = doc! {
         "homeScore": update.home_score,
