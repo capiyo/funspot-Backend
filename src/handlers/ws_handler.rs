@@ -591,36 +591,35 @@ async fn handle_incoming_message(
             {
                 Ok(Some(game)) => {
                     let time_elapsed = game.time_elapsed.unwrap_or(0.0);
-
-                    let is_half_time = time_elapsed >= 44.0 && time_elapsed <= 46.0;
-                    let is_full_time = time_elapsed >= 90.0;
-                    let is_injury_time = time_elapsed > 90.0 && time_elapsed < 100.0;
-
-                    let display_text = if is_full_time {
-                        "FT".to_string()
-                    } else if is_half_time {
-                        "HT".to_string()
-                    } else if is_injury_time {
-                        let injury = (time_elapsed - 90.0).floor() as u32;
-                        format!("90+{}'", injury)
-                    } else {
-                        let minutes = time_elapsed.floor();
-                        let seconds = ((time_elapsed % 1.0) * 60.0).round();
-                        if seconds > 0.0 {
-                            format!("{}{}", minutes, seconds)
-                        } else {
-                            format!("{}'", minutes)
+                    let normalized_status = game.status.trim().to_lowercase();
+                    let display_text = match normalized_status.as_str() {
+                        "completed" | "finished" | "full_time" | "full-time" | "ft" => "FT".to_string(),
+                        "half_time" | "halftime" | "ht" => "HT".to_string(),
+                        _ if time_elapsed > 90.0 => {
+                            format!("90+{}'", (time_elapsed - 90.0).floor() as u32)
+                        }
+                        _ => {
+                            let minutes = time_elapsed.floor();
+                            let seconds = ((time_elapsed % 1.0) * 60.0).round();
+                            if seconds > 0.0 { format!("{}{}", minutes, seconds) } else { format!("{}'", minutes) }
                         }
                     };
 
+                    // This is a live snapshot delivered over the already-open
+                    // fixture socket. Scores/minute are not read from the
+                    // browser's persisted fixture cache.
                     let response = serde_json::json!({
                         "type": "minute.response",
                         "payload": {
                             "fixture_id": fixture_id,
                             "channel_id": channel_id,
                             "minute": time_elapsed,
+                            "time_elapsed": time_elapsed,
+                            "home_score": game.home_score,
+                            "away_score": game.away_score,
+                            "status": normalized_status,
+                            "is_live": game.is_live,
                             "minute_display": display_text,
-                            "status": if is_half_time { "half_time" } else if is_full_time { "full_time" } else { "live" },
                             "timestamp": Utc::now().to_rfc3339(),
                         },
                     });
