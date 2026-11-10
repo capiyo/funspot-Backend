@@ -582,12 +582,18 @@ async fn handle_incoming_message(
             }
 
             let games_col = state.db.collection::<crate::models::game::Game>("games");
+            let fixtures_col = state.db.collection::<crate::models::game::Game>("fixtures");
 
-            match games_col
-                .find_one(doc! {
-                    "matchId": &fixture_id,
-                })
-                .await
+            // The ingestion handler supports both canonical collections.
+            // The WebSocket snapshot must read the same fixture regardless
+            // of which collection currently owns it.
+            let game_result = match games_col.find_one(doc! { "matchId": &fixture_id }).await {
+                Ok(Some(game)) => Ok(Some(game)),
+                Ok(None) => fixtures_col.find_one(doc! { "matchId": &fixture_id }).await,
+                Err(error) => Err(error),
+            };
+
+            match game_result
             {
                 Ok(Some(game)) => {
                     let time_elapsed = game.time_elapsed.unwrap_or(0.0);
