@@ -88,6 +88,8 @@ pub struct Player {
     pub lineup: String,
     #[serde(rename = "playerId")]
     pub player_id: Option<String>,
+    #[serde(rename = "photoUrl", default, skip_serializing_if = "Option::is_none")]
+    pub photo_url: Option<String>,
     pub rating: Option<f64>,
 }
 
