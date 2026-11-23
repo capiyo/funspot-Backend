@@ -7,6 +7,7 @@ use crate::models::chat::{
     Channel, ChannelActivity, ChannelFixture, ChannelMember, Message, Payout, Vote, VoteCounts,
 };
 use crate::{AppError, AppState};
+use crate::services::fcm_service::init_fcm_service;
 
 // ============================================================================
 // CREATE CHANNEL
@@ -163,7 +164,7 @@ pub async fn send_message_handler(
         )
         .await?;
 
-    // Update fixture last message if applicable
+    // Update fixture last message if applicable.
     if let Some(fixture_id) = &payload.fixture_id {
         channel_fixtures_col
             .update_one(
@@ -180,6 +181,56 @@ pub async fn send_message_handler(
                 },
             )
             .await?;
+    }
+
+    // Notify every other channel member. The FCM service first persists the
+    // inbox event, then attempts push delivery; offline users still get it.
+    if let Some(channel) = channels_col
+        .find_one(doc! { "channel_id": &payload.channel_id })
+        .await?
+    {
+        let recipients: Vec<String> = channel.members.iter()
+            .filter(|member| member.user_id != payload.sender_id)
+            .map(|member| member.user_id.clone())
+            .collect();
+        if !recipients.is_empty() {
+            let state_for_notifications = state.clone();
+            let channel_id = payload.channel_id.clone();
+            let fixture_id = payload.fixture_id.clone();
+            let sender_id = payload.sender_id.clone();
+            let sender_name = payload.sender_name.clone();
+            let channel_name = channel.name.clone();
+            let message_text = payload.text.clone();
+
+            tokio::spawn(async move {
+                let Ok(fcm_service) = init_fcm_service().await else {
+                    eprintln!("Could not initialize channel message notification service");
+                    return;
+                };
+                let preview: String = message_text.chars().take(120).collect();
+                let body = if preview.is_empty() { "Sent an attachment".to_string() } else { preview };
+                let title = format!("{} · {}", channel_name, sender_name);
+
+                for recipient_id in recipients {
+                    let data = serde_json::json!({
+                        "type": "chat.message",
+                        "channel_id": channel_id,
+                        "fixture_id": fixture_id,
+                        "sender_id": sender_id,
+                    });
+                    if let Err(error) = fcm_service.send_to_user(
+                        &state_for_notifications,
+                        &recipient_id,
+                        &title,
+                        &body,
+                        data,
+                        "chat.message",
+                    ).await {
+                        eprintln!("Channel message notification failed: {}", error);
+                    }
+                }
+            });
+        }
     }
 
     Ok(Json(json!({ "success": true })))
