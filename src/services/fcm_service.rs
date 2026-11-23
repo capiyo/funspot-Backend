@@ -162,9 +162,49 @@ let project_id =
 ) -> Result<bool, AppError> {
     println!("\n📱 [FCM] ===== SENDING TO USER: {} =====", user_id);
 
+    // Persist to the in-app inbox independently of push permission, token
+    // registration, or provider availability. Push is a delivery channel;
+    // it must never be the source of truth for notification history.
+    self.save_notification(state, user_id, notification_type, title, body, data.clone()).await?;
+
+    // Account preferences govern push delivery, never whether an event is
+    // retained in the authenticated in-app inbox.
+    let preferences_collection: Collection<mongodb::bson::Document> =
+        state.db.collection("notification_preferences");
+    let preferences = preferences_collection.find_one(doc! { "user_id": user_id }).await
+        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
+    let push_enabled = preferences.as_ref()
+        .and_then(|value| value.get_bool("push_enabled").ok()).unwrap_or(true);
+    let category_enabled = match notification_type {
+        "chat.mention" | "mention" => preferences.as_ref()
+            .and_then(|value| value.get_bool("mention_alerts").ok()).unwrap_or(true),
+        "chat.message" => preferences.as_ref()
+            .and_then(|value| value.get_bool("message_alerts").ok()).unwrap_or(true),
+        "reply" | "comment.reply" => preferences.as_ref()
+            .and_then(|value| value.get_bool("reply_alerts").ok()).unwrap_or(true),
+        "reaction" | "like" => preferences.as_ref()
+            .and_then(|value| value.get_bool("reaction_alerts").ok()).unwrap_or(true)
+            && preferences.as_ref()
+                .and_then(|value| value.get_bool("like_alerts").ok()).unwrap_or(true),
+        "comment" | "fixture_comment" => preferences.as_ref()
+            .and_then(|value| value.get_bool("comment_alerts").ok()).unwrap_or(true),
+        "vote" | "vote.cast" | "vote_rival" | "vote_supporter" => preferences.as_ref()
+            .and_then(|value| value.get_bool("vote_alerts").ok()).unwrap_or(true),
+        _ => true,
+    };
+    if !push_enabled || !category_enabled {
+        println!("⏭️ [FCM] Push disabled by account preference; inbox entry retained");
+        return Ok(false);
+    }
+    let show_preview = preferences.as_ref()
+        .and_then(|value| value.get_bool("show_preview").ok()).unwrap_or(true);
+    let sound_enabled = preferences.as_ref()
+        .and_then(|value| value.get_bool("sound_enabled").ok()).unwrap_or(true);
+    let push_title = if show_preview { title } else { "Funspot" };
+    let push_body = if show_preview { body } else { "You have a new notification" };
+
     let tokens_collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
     let filter = doc! { "user_id": user_id };
-
     let mut cursor = match tokens_collection.find(filter).await {
         Ok(c) => c,
         Err(e) => {
@@ -182,11 +222,10 @@ let project_id =
         .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?
     {
         tokens_found += 1;
-        let token_preview = &token_doc.fcm_token[0..20.min(token_doc.fcm_token.len())];
-        println!("📱 [FCM] Found token #{}: {}...", tokens_found, token_preview);
+        println!("📱 [FCM] Found registered device token #{}", tokens_found);
 
         if self
-            .send_to_device(&token_doc.fcm_token, title, body, data.clone(), notification_type)
+            .send_to_device(&token_doc.fcm_token, push_title, push_body, data.clone(), notification_type, sound_enabled)
             .await
         {
             success = true;
@@ -196,20 +235,8 @@ let project_id =
         }
     }
 
-    // ✅ Skip entirely if no token — don't save notification, don't waste time
     if tokens_found == 0 {
-        println!("⏭️ [FCM] Skipping user {} — no FCM tokens registered", user_id);
-        return Ok(false);
-    }
-
-    // Only save notification if we actually attempted a send
-    if let Err(e) = self
-        .save_notification(state, user_id, notification_type, title, body, data)
-        .await
-    {
-        println!("⚠️ [FCM] Failed to save notification: {}", e);
-    } else {
-        println!("✅ [FCM] Notification saved to database");
+        println!("⏭️ [FCM] No registered push tokens for user {}; inbox entry retained", user_id);
     }
 
     println!("📱 [FCM] ===== END USER {} =====\n", user_id);
@@ -223,12 +250,12 @@ let project_id =
         body: &str,
         data: Value,
         notification_type: &str,
+        sound_enabled: bool,
     ) -> bool {
         println!("\n   🔧 [FCM-DEVICE] ===== SENDING TO DEVICE =====");
         let device_start = Instant::now();
 
-        let token_preview = &token[0..20.min(token.len())];
-        println!("   🔧 [FCM-DEVICE] Token: {}...", token_preview);
+        // Never log device registration tokens.
         println!("   🔧 [FCM-DEVICE] Title: {}", title);
         println!("   🔧 [FCM-DEVICE] Body: {}", body);
         println!("   🔧 [FCM-DEVICE] Type: {}", notification_type);
@@ -273,7 +300,7 @@ let project_id =
                     "notification": {
                         "click_action": "FLUTTER_NOTIFICATION_CLICK",
                         "channel_id": "vote_notifications",
-                        "sound": "default",
+                        "sound": if sound_enabled { "default" } else { "" },
                     }
                 },
                 "apns": {
@@ -511,11 +538,8 @@ pub async fn init_fcm_service() -> anyhow::Result<Arc<FCMService>> {
     // Test getting a token to verify everything works
     println!("🔍 Testing FCM with a sample token request...");
     match service.get_access_token().await {
-        Ok(token) => {
-            println!(
-                "✅ Test token obtained successfully! (preview: {}...)",
-                &token[0..20.min(token.len())]
-            );
+        Ok(_token) => {
+            println!("✅ Firebase OAuth token request succeeded.");
         }
         Err(e) => {
             println!(

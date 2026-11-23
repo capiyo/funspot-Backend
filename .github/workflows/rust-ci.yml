@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [master]
   push:
-    branches: [master, feature/chat-unread-mentions]
+    branches: [master, feature/chat-unread-mentions, feature/whatsapp-notification-parity]
 
 permissions:
   contents: read
