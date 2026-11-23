@@ -217,6 +217,7 @@ pub async fn send_message_handler(
                         "channel_id": channel_id,
                         "fixture_id": fixture_id,
                         "sender_id": sender_id,
+                        "url": format!("/messages/{}?fixtureId={}", channel_id, fixture_id),
                     });
                     if let Err(error) = fcm_service.send_to_user(
                         &state_for_notifications,
