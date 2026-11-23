@@ -63,17 +63,53 @@ pub struct MarkReadRequest {
     pub channel_id: Option<String>,
 }
 
+fn default_true() -> bool { true }
+
 #[derive(Debug, Serialize)]
 pub struct NotificationPreferences {
+    #[serde(default = "default_true")]
     pub vote_alerts: bool,
+    #[serde(default = "default_true")]
     pub like_alerts: bool,
+    #[serde(default = "default_true")]
     pub comment_alerts: bool,
+    #[serde(default = "default_true")]
+    pub message_alerts: bool,
+    #[serde(default = "default_true")]
+    pub mention_alerts: bool,
+    #[serde(default = "default_true")]
+    pub reply_alerts: bool,
+    #[serde(default = "default_true")]
+    pub reaction_alerts: bool,
+    #[serde(default = "default_true")]
+    pub push_enabled: bool,
+    #[serde(default = "default_true")]
+    pub show_preview: bool,
+    #[serde(default = "default_true")]
+    pub sound_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdatePreferencesRequest {
     pub user_id: String,
+    #[serde(default = "default_true")]
     pub vote_alerts: bool,
+    #[serde(default = "default_true")]
     pub like_alerts: bool,
+    #[serde(default = "default_true")]
     pub comment_alerts: bool,
+    #[serde(default = "default_true")]
+    pub message_alerts: bool,
+    #[serde(default = "default_true")]
+    pub mention_alerts: bool,
+    #[serde(default = "default_true")]
+    pub reply_alerts: bool,
+    #[serde(default = "default_true")]
+    pub reaction_alerts: bool,
+    #[serde(default = "default_true")]
+    pub push_enabled: bool,
+    #[serde(default = "default_true")]
+    pub show_preview: bool,
+    #[serde(default = "default_true")]
+    pub sound_enabled: bool,
 }
