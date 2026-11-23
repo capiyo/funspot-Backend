@@ -311,7 +311,8 @@ pub async fn get_unread_summary(
             "poke.create",
             "poke.matched",
             "poke.settled",
-            "chat.message"
+            "chat.message",
+            "chat.mention"
         ] }
     };
     let notifications = collection.count_documents(unread_filter).await
