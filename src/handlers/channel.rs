@@ -1,6 +1,8 @@
 use crate::models::user::User;
+use crate::auth::authorize_user;
 use axum::{
     extract::{Path, Query, State}, // ✅ REMOVED Multipart from here
+    http::HeaderMap,
     response::IntoResponse,
     Json,
 };
@@ -4591,7 +4593,9 @@ pub async fn get_user_liked_fixtures_handler(
 pub async fn mark_chat_as_read_handler(
     State(state): State<AppState>,
     Path((channel_id, fixture_id, user_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<Value>> {
+    authorize_user(&headers, &user_id)?;
     let channel_fixtures_col = state.db.collection::<ChannelFixture>("channel_fixtures");
 
     let unread_key = format!("unread_counts.{}", user_id);
@@ -4615,7 +4619,9 @@ pub async fn mark_chat_as_read_handler(
 pub async fn get_user_unread_count_handler(
     State(state): State<AppState>,
     Path((channel_id, fixture_id, user_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<Value>> {
+    authorize_user(&headers, &user_id)?;
     let channel_fixtures_col = state.db.collection::<ChannelFixture>("channel_fixtures");
 
     let result = channel_fixtures_col

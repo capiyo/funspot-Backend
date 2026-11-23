@@ -7,6 +7,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber;
 
 mod config;
+mod auth;
 mod database;
 mod dumper;
 mod errors;
@@ -23,6 +24,7 @@ use state::AppState;
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+    validate_jwt_secret();
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -38,6 +40,13 @@ async fn main() {
 
     let app = build_router(app_state).await;
     start_server(app).await;
+}
+
+fn validate_jwt_secret() {
+    let secret = std::env::var("JWT_SECRET")
+        .expect("JWT_SECRET must be configured before the API starts");
+    config::validate_jwt_secret(&secret)
+        .unwrap_or_else(|message| panic!("{}", message));
 }
 
 async fn create_directories() {
@@ -130,7 +139,6 @@ async fn build_router(app_state: AppState) -> Router {
         .route("/", get(root_handler))
         .route("/health", get(health_check))
         .route("/api/health", get(api_health_check))
-        .route("/debug/fcm", get(debug_fcm))
         .route("/api/simple_health_check", get(simple_health_check))
         .nest("/api/auth", routes::auth::user_routes())
         .nest("/api/games", routes::games::routes())
@@ -175,28 +183,6 @@ async fn start_server(app: Router) {
 
 async fn root_handler() -> &'static str {
     "🚀 Peer-to-Peer Betting API"
-}
-
-// Debug endpoint to test FCM
-async fn debug_fcm(State(state): State<AppState>) -> Json<Value> {
-    if let Some(fcm) = &state.fcm_service {
-        // Try to get a token to verify it's working
-        match fcm.get_access_token().await {
-            Ok(token) => Json(json!({
-                "status": "FCM working",
-                "token_prefix": &token[0..20.min(token.len())],
-                "token_length": token.len(),
-            })),
-            Err(e) => Json(json!({
-                "status": "FCM error",
-                "error": e.to_string(),
-            })),
-        }
-    } else {
-        Json(json!({
-            "status": "FCM not initialized",
-        }))
-    }
 }
 
 async fn health_check() -> Json<Value> {
