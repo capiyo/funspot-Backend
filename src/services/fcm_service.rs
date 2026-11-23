@@ -173,6 +173,11 @@ let project_id =
         }
     };
 
+    // Persist to the in-app inbox independently of push permission, token
+    // registration, or provider availability. Push is a delivery channel;
+    // it must never be the source of truth for notification history.
+    self.save_notification(state, user_id, notification_type, title, body, data.clone()).await?;
+
     let mut tokens_found = 0;
     let mut success = false;
 
@@ -182,8 +187,7 @@ let project_id =
         .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?
     {
         tokens_found += 1;
-        let token_preview = &token_doc.fcm_token[0..20.min(token_doc.fcm_token.len())];
-        println!("📱 [FCM] Found token #{}: {}...", tokens_found, token_preview);
+        println!("📱 [FCM] Found registered device token #{}", tokens_found);
 
         if self
             .send_to_device(&token_doc.fcm_token, title, body, data.clone(), notification_type)
@@ -196,20 +200,8 @@ let project_id =
         }
     }
 
-    // ✅ Skip entirely if no token — don't save notification, don't waste time
     if tokens_found == 0 {
-        println!("⏭️ [FCM] Skipping user {} — no FCM tokens registered", user_id);
-        return Ok(false);
-    }
-
-    // Only save notification if we actually attempted a send
-    if let Err(e) = self
-        .save_notification(state, user_id, notification_type, title, body, data)
-        .await
-    {
-        println!("⚠️ [FCM] Failed to save notification: {}", e);
-    } else {
-        println!("✅ [FCM] Notification saved to database");
+        println!("⏭️ [FCM] No registered push tokens for user {}; inbox entry retained", user_id);
     }
 
     println!("📱 [FCM] ===== END USER {} =====\n", user_id);
