@@ -160,7 +160,8 @@ pub async fn create_message(
                                 };
                                 let data = serde_json::json!({
                                     "type": "chat.message",
-                                    "post_id": post_id_clone,
+                                    "post_id": post_id_clone.clone(),
+                                    "url": format!("/comments/{}", post_id_clone),
                                     "message_id": message_id,
                                     "sender_id": sender_id,
                                     "sender_name": sender_name,
