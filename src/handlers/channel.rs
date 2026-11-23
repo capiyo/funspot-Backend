@@ -2304,6 +2304,7 @@ pub async fn send_message_handler(
                 "fixture_id": payload.fixture_id,
                 "message_id": message_id,
                 "sender_id": payload.user_id,
+                "url": format!("/messages/{}?fixtureId={}", channel_id, payload.fixture_id.as_deref().unwrap_or("general")),
             });
             if let Err(error) = fcm_service.send_to_user(
                 &state,
@@ -3051,6 +3052,7 @@ async fn notify_channel_members(
         "channel_id": channel_id,
         "fixture_id": fixture_id,
         "actor_id": actor_id,
+        "url": format!("/messages/{}?fixtureId={}", channel_id, fixture_id),
     });
 
     let mut success_count = 0usize;
