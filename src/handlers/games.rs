@@ -1903,6 +1903,8 @@ pub async fn add_commentary(
 
     let broadcast_msg = json!({
         "type": "commentary.new",
+        "fixture_id": payload.match_id,
+        "match_id": payload.match_id,
         "payload": entry,
         "timestamp": Utc::now().to_rfc3339(),
     });
@@ -2013,6 +2015,8 @@ pub async fn add_commentary_bulk(
 
     let broadcast_msg = json!({
         "type": "commentary.bulk",
+        "fixture_id": payload.match_id,
+        "match_id": payload.match_id,
         "payload": broadcast_entries,
         "timestamp": Utc::now().to_rfc3339(),
     });
