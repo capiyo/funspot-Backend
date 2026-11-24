@@ -2206,6 +2206,18 @@ pub async fn send_message_handler(
         ));
     }
 
+    // temp_id is an idempotency key for safe retries after a lost HTTP response.
+    if let Some(temp_id) = payload.temp_id.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(existing) = messages_col.find_one(doc! {
+            "channel_id": &channel_id,
+            "sender_id": &payload.user_id,
+            "temp_id": temp_id,
+        }).await? {
+            let response = MessageResponse::from(existing);
+            return Ok(Json(json!({ "success": true, "message": "Message already accepted", "data": response })));
+        }
+    }
+
     let message_id = Uuid::new_v4().to_string();
 
     // Build reply_to data if provided

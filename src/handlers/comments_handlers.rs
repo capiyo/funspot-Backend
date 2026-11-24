@@ -6,7 +6,8 @@ use axum::{
 };
 use chrono::Utc;
 use futures_util::TryStreamExt;
-use mongodb::bson::{doc, oid::ObjectId};
+use mongodb::bson::{doc, oid::ObjectId, Bson};
+use std::collections::{HashMap, HashSet};
 use mongodb::{options::FindOptions, Collection};
 use serde_json::json;
 use uuid::Uuid;
@@ -124,7 +125,7 @@ pub async fn create_comment(
         };
 
         let parent_exists = comment_collection
-            .find_one(doc! { "_id": parent_object_id })
+            .find_one(doc! { "_id": parent_object_id, "postId": &post_id })
             .await?
             .is_some();
 
@@ -212,12 +213,8 @@ pub async fn get_comments(
     // Build filter — field names match the actual BSON keys stored via
     // #[serde(rename = "...")] on Comment (postId, userId,
     // parentCommentId), NOT the Rust snake_case field names.
-    let mut filter = doc! { "postId": &post_id };
-
-    // If exclude_replies is true, only get top-level comments
-    if params.exclude_replies {
-        filter.insert("parentCommentId", doc! { "$eq": null });
-    }
+    // Paginate root comments only; replies are attached recursively below.
+    let mut filter = doc! { "postId": &post_id, "parentCommentId": Bson::Null };
 
     // Filter by user if provided
     if let Some(user_id) = &params.user_id {
@@ -257,37 +254,36 @@ pub async fn get_comments(
 
     let comments: Vec<Comment> = cursor.try_collect().await?;
 
-    // Get replies for each comment if not excluding replies
-    let mut comment_responses: Vec<CommentResponse> = Vec::new();
-
-    for comment in comments {
-        let mut comment_response = CommentResponse::from(comment.clone());
-
-        // If this is a top-level comment and we're not excluding replies, fetch its replies
-        if !params.exclude_replies && comment.parent_comment_id.is_none() && comment.reply_count > 0 {
-            if let Some(ref comment_id) = comment.id {
-                let comment_id_hex = comment_id.to_hex();
-                let replies_cursor = collection
-                    .find(doc! { "parentCommentId": &comment_id_hex })
-                    .with_options(
-                        FindOptions::builder()
-                            .sort(doc! { "createdAt": 1 })
-                            .limit(10) // Limit replies to 10 per comment
-                            .build()
-                    )
-                    .await?;
-
-                let replies: Vec<Comment> = replies_cursor.try_collect().await?;
-                let reply_responses: Vec<CommentResponse> = replies.into_iter()
-                    .map(CommentResponse::from)
-                    .collect();
-
-                comment_response.replies = Some(reply_responses);
+    let mut replies_by_parent: HashMap<String, Vec<Comment>> = HashMap::new();
+    if !params.exclude_replies {
+        let mut pending_parent_ids: Vec<String> = comments.iter()
+            .filter_map(|comment| comment.id.as_ref().map(|id| id.to_hex()))
+            .collect();
+        let mut visited = HashSet::new();
+        while !pending_parent_ids.is_empty() {
+            pending_parent_ids.retain(|id| visited.insert(id.clone()));
+            if pending_parent_ids.is_empty() { break; }
+            let replies_cursor = collection
+                .find(doc! {
+                    "postId": &post_id,
+                    "parentCommentId": { "$in": &pending_parent_ids },
+                })
+                .with_options(FindOptions::builder().sort(doc! { "createdAt": 1 }).build())
+                .await?;
+            let replies: Vec<Comment> = replies_cursor.try_collect().await?;
+            pending_parent_ids = replies.iter()
+                .filter_map(|reply| reply.id.as_ref().map(|id| id.to_hex()))
+                .collect();
+            for reply in replies {
+                if let Some(parent_id) = reply.parent_comment_id.clone() {
+                    replies_by_parent.entry(parent_id).or_default().push(reply);
+                }
             }
         }
-
-        comment_responses.push(comment_response);
     }
+    let comment_responses: Vec<CommentResponse> = comments.into_iter()
+        .map(|comment| build_comment_response_tree(comment, &mut replies_by_parent))
+        .collect();
 
     log_info!("[{}] get_comments completed. Found {} comments", request_id, comment_responses.len());
 
@@ -305,6 +301,16 @@ pub async fn get_comments(
         }
     })))
 }
+fn build_comment_response_tree(comment: Comment, replies_by_parent: &mut HashMap<String, Vec<Comment>>) -> CommentResponse {
+    let mut response = CommentResponse::from(comment);
+    if let Some(replies) = replies_by_parent.remove(&response.id) {
+        response.replies = Some(replies.into_iter()
+            .map(|reply| build_comment_response_tree(reply, replies_by_parent))
+            .collect());
+    }
+    response
+}
+
 // ============================================================================
 // GET COMMENT BY ID
 // ============================================================================

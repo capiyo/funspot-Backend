@@ -1782,22 +1782,22 @@ async fn save_message_to_database(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let reply_to_selection = obj
-                .get("selection")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let reply_to_selection = obj.get("selection").and_then(|v| v.as_str()).map(|s| s.to_string());
             let is_me = obj.get("isMe").and_then(|v| v.as_bool()).unwrap_or(false);
-
+            let image_url = obj.get("image_url").or_else(|| obj.get("imageUrl")).and_then(|v| v.as_str()).map(|s| s.to_string());
+            let video_url = obj.get("video_url").or_else(|| obj.get("videoUrl")).and_then(|v| v.as_str()).map(|s| s.to_string());
+            let is_image = obj.get("is_image").or_else(|| obj.get("isImage")).and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_video = obj.get("is_video").or_else(|| obj.get("isVideo")).and_then(|v| v.as_bool()).unwrap_or(false);
             ReplyToData {
                 message_id: reply_to_id,
                 text: reply_to_text,
                 username: reply_to_username,
                 selection: reply_to_selection,
-                is_me,  // ✅ was hardcoded `false` — now uses the parsed value
-                image_url: None,
-                video_url: None,
-                is_image: false,
-                is_video: false,
+                is_me,
+                image_url,
+                video_url,
+                is_image,
+                is_video,
             }
         });
 
@@ -1828,6 +1828,7 @@ async fn save_message_to_database(
     }
 
     let now_bson = bson::DateTime::now();
+    let reply_to_id = reply_to.as_ref().map(|reply| reply.message_id.clone());
 
     let message = Message {
         id: Some(ObjectId::new()),
@@ -1852,8 +1853,8 @@ async fn save_message_to_database(
         video_duration: None,
         video_size: None,
         is_video: is_video,
-        reply_to: reply_to,
-        reply_to_id: None,
+        reply_to,
+        reply_to_id,
         mentioned_user_ids: mentioned_user_ids.clone(),
     };
 
