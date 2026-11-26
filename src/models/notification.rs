@@ -68,6 +68,13 @@ pub struct NotificationPreferences {
     pub vote_alerts: bool,
     pub like_alerts: bool,
     pub comment_alerts: bool,
+    pub message_alerts: bool,
+    pub mention_alerts: bool,
+    pub reply_alerts: bool,
+    pub reaction_alerts: bool,
+    pub push_enabled: bool,
+    pub show_preview: bool,
+    pub sound_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,4 +83,11 @@ pub struct UpdatePreferencesRequest {
     pub vote_alerts: bool,
     pub like_alerts: bool,
     pub comment_alerts: bool,
+    #[serde(default)] pub message_alerts: Option<bool>,
+    #[serde(default)] pub mention_alerts: Option<bool>,
+    #[serde(default)] pub reply_alerts: Option<bool>,
+    #[serde(default)] pub reaction_alerts: Option<bool>,
+    #[serde(default)] pub push_enabled: Option<bool>,
+    #[serde(default)] pub show_preview: Option<bool>,
+    #[serde(default)] pub sound_enabled: Option<bool>,
 }

@@ -319,10 +319,24 @@ pub async fn get_notification_preferences(
         vote_alerts: document.get_bool("vote_alerts").unwrap_or(true),
         like_alerts: document.get_bool("like_alerts").unwrap_or(true),
         comment_alerts: document.get_bool("comment_alerts").unwrap_or(true),
+        message_alerts: document.get_bool("message_alerts").unwrap_or(true),
+        mention_alerts: document.get_bool("mention_alerts").unwrap_or(true),
+        reply_alerts: document.get_bool("reply_alerts").unwrap_or(true),
+        reaction_alerts: document.get_bool("reaction_alerts").unwrap_or(true),
+        push_enabled: document.get_bool("push_enabled").unwrap_or(true),
+        show_preview: document.get_bool("show_preview").unwrap_or(true),
+        sound_enabled: document.get_bool("sound_enabled").unwrap_or(true),
     }).unwrap_or(NotificationPreferences {
         vote_alerts: true,
         like_alerts: true,
         comment_alerts: true,
+        message_alerts: true,
+        mention_alerts: true,
+        reply_alerts: true,
+        reaction_alerts: true,
+        push_enabled: true,
+        show_preview: true,
+        sound_enabled: true,
     });
 
     Ok(Json(preferences))
@@ -335,12 +349,33 @@ pub async fn update_notification_preferences(
     let collection: Collection<mongodb::bson::Document> =
         state.db.collection("notification_preferences");
     let filter = doc! { "user_id": &payload.user_id };
+    let existing = collection.find_one(filter.clone()).await
+        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?;
+    let previous = |key: &str| existing.as_ref().and_then(|document| document.get_bool(key).ok());
+
+    // Old clients send only the original three fields. Preserve newer settings
+    // when those clients update their preferences rather than resetting them.
+    let message_alerts = payload.message_alerts.or_else(|| previous("message_alerts")).unwrap_or(true);
+    let mention_alerts = payload.mention_alerts.or_else(|| previous("mention_alerts")).unwrap_or(true);
+    let reply_alerts = payload.reply_alerts.or_else(|| previous("reply_alerts")).unwrap_or(true);
+    let reaction_alerts = payload.reaction_alerts.or_else(|| previous("reaction_alerts")).unwrap_or(true);
+    let push_enabled = payload.push_enabled.or_else(|| previous("push_enabled")).unwrap_or(true);
+    let show_preview = payload.show_preview.or_else(|| previous("show_preview")).unwrap_or(true);
+    let sound_enabled = payload.sound_enabled.or_else(|| previous("sound_enabled")).unwrap_or(true);
+
     let update = doc! {
         "$set": {
             "user_id": &payload.user_id,
             "vote_alerts": payload.vote_alerts,
             "like_alerts": payload.like_alerts,
             "comment_alerts": payload.comment_alerts,
+            "message_alerts": message_alerts,
+            "mention_alerts": mention_alerts,
+            "reply_alerts": reply_alerts,
+            "reaction_alerts": reaction_alerts,
+            "push_enabled": push_enabled,
+            "show_preview": show_preview,
+            "sound_enabled": sound_enabled,
             "updated_at": BsonDateTime::now(),
         }
     };
@@ -354,6 +389,13 @@ pub async fn update_notification_preferences(
         "vote_alerts": payload.vote_alerts,
         "like_alerts": payload.like_alerts,
         "comment_alerts": payload.comment_alerts,
+        "message_alerts": message_alerts,
+        "mention_alerts": mention_alerts,
+        "reply_alerts": reply_alerts,
+        "reaction_alerts": reaction_alerts,
+        "push_enabled": push_enabled,
+        "show_preview": show_preview,
+        "sound_enabled": sound_enabled,
     })))
 }
 
