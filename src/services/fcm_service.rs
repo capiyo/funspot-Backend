@@ -151,71 +151,82 @@ let project_id =
         }
     }
 
-   pub async fn send_to_user(
-    &self,
-    state: &AppState,
-    user_id: &str,
-    title: &str,
-    body: &str,
-    data: Value,
-    notification_type: &str,
-) -> Result<bool, AppError> {
-    println!("\n📱 [FCM] ===== SENDING TO USER: {} =====", user_id);
+    pub async fn send_to_user(
+        &self,
+        state: &AppState,
+        user_id: &str,
+        title: &str,
+        body: &str,
+        data: Value,
+        notification_type: &str,
+    ) -> Result<bool, AppError> {
+        println!("\\n📱 [FCM] ===== SENDING TO USER: {} =====", user_id);
 
-    let tokens_collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
-    let filter = doc! { "user_id": user_id };
-
-    let mut cursor = match tokens_collection.find(filter).await {
-        Ok(c) => c,
-        Err(e) => {
-            println!("❌ [FCM] Database error: {}", e);
-            return Err(AppError::InternalServerError(format!("Database error: {}", e)));
+        // The in-app inbox is durable and independent of push permissions or
+        // device-token availability. Save exactly once before evaluating FCM.
+        if let Err(error) = self.save_notification(
+            state, user_id, notification_type, title, body, data.clone(),
+        ).await {
+            println!("⚠️ [FCM] Failed to save inbox notification: {}", error);
         }
-    };
 
-    let mut tokens_found = 0;
-    let mut success = false;
-
-    while let Some(token_doc) = cursor
-        .try_next()
-        .await
-        .map_err(|e| AppError::InternalServerError(format!("Database error: {}", e)))?
-    {
-        tokens_found += 1;
-        let token_preview = &token_doc.fcm_token[0..20.min(token_doc.fcm_token.len())];
-        println!("📱 [FCM] Found token #{}: {}...", tokens_found, token_preview);
-
-        if self
-            .send_to_device(&token_doc.fcm_token, title, body, data.clone(), notification_type)
+        let preferences_collection: Collection<mongodb::bson::Document> =
+            state.db.collection("notification_preferences");
+        let preferences = preferences_collection
+            .find_one(doc! { "user_id": user_id })
             .await
+            .map_err(|error| AppError::InternalServerError(format!("Database error: {}", error)))?;
+        let preference_enabled = |key: &str| {
+            preferences.as_ref().and_then(|document| document.get_bool(key).ok()).unwrap_or(true)
+        };
+        let category_key = match notification_type {
+            "chat_message" | "message" => Some("message_alerts"),
+            "chat_mention" | "mention" => Some("mention_alerts"),
+            "reply" | "comment_reply" => Some("reply_alerts"),
+            "reaction" | "like" => Some("reaction_alerts"),
+            "vote_rival" | "vote_supporter" | "vote.cast" => Some("vote_alerts"),
+            "comment" | "fixture_comment" | "fixture_comment_push" => Some("comment_alerts"),
+            _ => None,
+        };
+        if !preference_enabled("push_enabled")
+            || category_key.is_some_and(|key| !preference_enabled(key))
         {
-            success = true;
-            println!("✅ [FCM] Successfully sent to token #{}", tokens_found);
-        } else {
-            println!("❌ [FCM] Failed to send to token #{}", tokens_found);
+            println!("⏭️ [FCM] Push disabled by notification preferences for {}", user_id);
+            return Ok(false);
         }
+
+        let show_preview = preference_enabled("show_preview");
+        let sound_enabled = preference_enabled("sound_enabled");
+        let push_body = if show_preview { body } else { "You have a new notification" };
+        let tokens_collection: Collection<FCMToken> = state.db.collection("fcm_tokens");
+        let filter = doc! { "user_id": user_id };
+        let mut cursor = tokens_collection.find(filter).await
+            .map_err(|error| AppError::InternalServerError(format!("Database error: {}", error)))?;
+
+        let mut tokens_found = 0;
+        let mut success = false;
+        while let Some(token_doc) = cursor.try_next().await
+            .map_err(|error| AppError::InternalServerError(format!("Database error: {}", error)))?
+        {
+            tokens_found += 1;
+            let token_preview = &token_doc.fcm_token[0..20.min(token_doc.fcm_token.len())];
+            println!("📱 [FCM] Found token #{}: {}...", tokens_found, token_preview);
+            if self.send_to_device(
+                &token_doc.fcm_token, title, push_body, data.clone(), notification_type, sound_enabled,
+            ).await {
+                success = true;
+                println!("✅ [FCM] Successfully sent to token #{}", tokens_found);
+            } else {
+                println!("❌ [FCM] Failed to send to token #{}", tokens_found);
+            }
+        }
+
+        if tokens_found == 0 {
+            println!("⏭️ [FCM] No FCM tokens registered for {}; inbox item is saved", user_id);
+        }
+        println!("📱 [FCM] ===== END USER {} =====\\n", user_id);
+        Ok(success)
     }
-
-    // ✅ Skip entirely if no token — don't save notification, don't waste time
-    if tokens_found == 0 {
-        println!("⏭️ [FCM] Skipping user {} — no FCM tokens registered", user_id);
-        return Ok(false);
-    }
-
-    // Only save notification if we actually attempted a send
-    if let Err(e) = self
-        .save_notification(state, user_id, notification_type, title, body, data)
-        .await
-    {
-        println!("⚠️ [FCM] Failed to save notification: {}", e);
-    } else {
-        println!("✅ [FCM] Notification saved to database");
-    }
-
-    println!("📱 [FCM] ===== END USER {} =====\n", user_id);
-
-    Ok(success)
-}
     async fn send_to_device(
         &self,
         token: &str,
@@ -223,6 +234,7 @@ let project_id =
         body: &str,
         data: Value,
         notification_type: &str,
+        sound_enabled: bool,
     ) -> bool {
         println!("\n   🔧 [FCM-DEVICE] ===== SENDING TO DEVICE =====");
         let device_start = Instant::now();
@@ -273,7 +285,7 @@ let project_id =
                     "notification": {
                         "click_action": "FLUTTER_NOTIFICATION_CLICK",
                         "channel_id": "vote_notifications",
-                        "sound": "default",
+                        "sound": if sound_enabled { "default" } else { "" },
                     }
                 },
                 "apns": {
@@ -282,7 +294,7 @@ let project_id =
                     },
                     "payload": {
                         "aps": {
-                            "sound": "default",
+                            "sound": if sound_enabled { "default" } else { "" },
                             "badge": 1,
                             "category": "VOTE_CATEGORY"
                         }

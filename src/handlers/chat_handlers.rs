@@ -149,6 +149,8 @@ pub async fn create_message(
 
                         let sender_id = payload.sender_id.clone();
 
+                        let sender_id = payload.sender_id.clone();
+
                         tokio::spawn(async move {
                             let message_preview = if message_text.len() > 50 {
                                 format!("{}...", &message_text[0..50])
@@ -157,70 +159,40 @@ pub async fn create_message(
                             };
                             let notification_title = format!("New message from {}", sender_name);
                             let notification_data = serde_json::json!({
-                                "post_id": post_id_clone.clone(),
-                                "message_id": message_id.clone(),
-                                "sender_id": sender_id.clone(),
-                                "sender_name": sender_name.clone(),
+                                "post_id": post_id_clone,
+                                "message_id": message_id,
+                                "sender_id": sender_id,
+                                "sender_name": sender_name,
                                 "type": "chat_message"
                             });
-
-                            // Persist the inbox item independently of push delivery.
-                            // Users without an FCM token must still see the message
-                            // in their in-app notification history.
-                            let notifications_collection: Collection<Notification> =
-                                state_clone.db.collection("notifications");
-                            let notification = Notification {
+                            let fallback_notification = Notification {
                                 id: None,
                                 user_id: receiver_id.clone(),
                                 notification_type: "chat_message".to_string(),
                                 title: notification_title.clone(),
                                 body: message_preview.clone(),
-                                data: notification_data,
+                                data: notification_data.clone(),
                                 is_read: false,
                                 created_at: bson::DateTime::from_chrono(Utc::now()),
                             };
-                            if let Err(error) = notifications_collection.insert_one(notification).await {
-                                eprintln!("❌ Failed to persist chat notification: {}", error);
-                            }
 
-                            // Push delivery is optional and must not control inbox persistence.
-                            if let Ok(fcm_service) =
-                                crate::services::fcm_service::init_fcm_service().await
-                            {
-                                let tokens_collection: Collection<FCMToken> =
-                                    state_clone.db.collection("fcm_tokens");
-                                let token_filter = doc! { "user_id": &receiver_id };
-
-                                match tokens_collection.count_documents(token_filter).await {
-                                    Ok(token_count) if token_count > 0 => {
-                                        let push_data = serde_json::json!({
-                                            "post_id": post_id_clone,
-                                            "message_id": message_id,
-                                            "sender_id": sender_id,
-                                            "sender_name": sender_name,
-                                            "receiver_id": receiver_id,
-                                            "message_preview": message_preview,
-                                            "type": "chat_message",
-                                            "timestamp": Utc::now().to_rfc3339(),
-                                        });
-                                        match fcm_service.send_to_user(
-                                            &state_clone,
-                                            &receiver_id,
-                                            &notification_title,
-                                            &message_preview,
-                                            push_data,
-                                            "chat_message",
-                                        ).await {
-                                            Ok(true) => println!("✅ Push notification sent successfully to receiver"),
-                                            Ok(false) => println!("⚠️ Push notification was not delivered"),
-                                            Err(error) => eprintln!("❌ Error sending push notification: {}", error),
-                                        }
+                            match crate::services::fcm_service::init_fcm_service().await {
+                                Ok(fcm_service) => {
+                                    if let Err(error) = fcm_service.send_to_user(
+                                        &state_clone, &receiver_id, &notification_title,
+                                        &message_preview, notification_data, "chat_message",
+                                    ).await {
+                                        eprintln!("❌ Chat notification dispatch failed: {}", error);
                                     }
-                                    Ok(_) => println!("📱 No FCM tokens found for receiver: {}", receiver_id),
-                                    Err(error) => eprintln!("❌ Error checking receiver tokens: {}", error),
                                 }
-                            } else {
-                                eprintln!("❌ Failed to initialize FCM service; in-app notification is already saved");
+                                Err(error) => {
+                                    eprintln!("❌ FCM unavailable; saving chat notification without push: {}", error);
+                                    let notifications_collection: Collection<Notification> =
+                                        state_clone.db.collection("notifications");
+                                    if let Err(save_error) = notifications_collection.insert_one(fallback_notification).await {
+                                        eprintln!("❌ Failed to persist chat notification: {}", save_error);
+                                    }
+                                }
                             }
                         });
                         // ========== END FCM NOTIFICATION ==========
