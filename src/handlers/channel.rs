@@ -2628,10 +2628,30 @@ pub struct DeleteMessageRequest {
 pub async fn delete_message_handler(
     State(state): State<AppState>,
     Path((_channel_id, message_id)): Path<(String, String)>,
+    headers: HeaderMap,
     Json(payload): Json<DeleteMessageRequest>,
 ) -> Result<Json<serde_json::Value>> {
     let messages_col = state.db.collection::<Message>("messages");
     let channel_fixtures_col = state.db.collection::<ChannelFixture>("channel_fixtures");
+
+    // Resolve the authenticated identity from the same JWT issued by login.
+    // Never trust a caller-supplied user_id as proof of message ownership.
+    let bearer = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or(AppError::Unauthorized)?;
+    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".to_string());
+    let claims = decode::<Claims>(
+        bearer,
+        &DecodingKey::from_secret(jwt_secret.as_bytes()),
+        &Validation::default(),
+    )
+    .map_err(|_| AppError::Unauthorized)?
+    .claims;
+    if claims.sub != payload.user_id {
+        return Err(AppError::Unauthorized);
+    }
 
     // History exposes Mongo's ObjectId as `id`; older callers may send
     // the UUID in `message_id`. Accept either identity, scoped to this channel.
@@ -2649,7 +2669,7 @@ pub async fn delete_message_handler(
         .ok_or(AppError::DocumentNotFound)?;
 
     // Check if user owns the message
-    if message.sender_id != payload.user_id {
+    if message.sender_id != claims.sub {
         return Err(AppError::ValidationError(
             "You can only delete your own messages".to_string(),
         ));
