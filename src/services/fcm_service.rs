@@ -180,10 +180,10 @@ let project_id =
             preferences.as_ref().and_then(|document| document.get_bool(key).ok()).unwrap_or(true)
         };
         let category_key = match notification_type {
-            "chat_message" | "message" => Some("message_alerts"),
-            "chat_mention" | "mention" => Some("mention_alerts"),
-            "reply" | "comment_reply" => Some("reply_alerts"),
-            "reaction" | "like" => Some("reaction_alerts"),
+            "chat_message" | "chat.message" | "message" => Some("message_alerts"),
+            "chat_mention" | "chat.mention" | "mention" => Some("mention_alerts"),
+            "reply" | "comment_reply" | "fixture_comment_reply" => Some("reply_alerts"),
+            "reaction" | "like" | "post_like" => Some("reaction_alerts"),
             "vote_rival" | "vote_supporter" | "vote.cast" => Some("vote_alerts"),
             "comment" | "fixture_comment" | "fixture_comment_push" => Some("comment_alerts"),
             _ => None,
