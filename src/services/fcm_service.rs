@@ -262,9 +262,28 @@ let project_id =
             }
         };
 
-        // Step 2: Build FCM message
+        // Step 2: Build FCM message. Omit sound fields entirely when the user
+        // disables notification sounds; an empty FCM sound name is not a valid
+        // portable way to request silent delivery.
         println!("   🔧 [FCM-DEVICE] Step 2/4: Building FCM message...");
         let message_start = Instant::now();
+        let android_notification = if sound_enabled {
+            json!({
+                "click_action": "FLUTTER_NOTIFICATION_CLICK",
+                "channel_id": "vote_notifications",
+                "sound": "default",
+            })
+        } else {
+            json!({
+                "click_action": "FLUTTER_NOTIFICATION_CLICK",
+                "channel_id": "vote_notifications",
+            })
+        };
+        let apns_aps = if sound_enabled {
+            json!({ "sound": "default", "badge": 1, "category": "VOTE_CATEGORY" })
+        } else {
+            json!({ "badge": 1, "category": "VOTE_CATEGORY" })
+        };
         let message = json!({
             "message": {
                 "token": token,
@@ -282,23 +301,11 @@ let project_id =
                 },
                 "android": {
                     "priority": "high",
-                    "notification": {
-                        "click_action": "FLUTTER_NOTIFICATION_CLICK",
-                        "channel_id": "vote_notifications",
-                        "sound": if sound_enabled { "default" } else { "" },
-                    }
+                    "notification": android_notification,
                 },
                 "apns": {
-                    "headers": {
-                        "apns-priority": "10"
-                    },
-                    "payload": {
-                        "aps": {
-                            "sound": if sound_enabled { "default" } else { "" },
-                            "badge": 1,
-                            "category": "VOTE_CATEGORY"
-                        }
-                    }
+                    "headers": { "apns-priority": "10" },
+                    "payload": { "aps": apns_aps }
                 }
             }
         });
