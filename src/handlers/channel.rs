@@ -2658,17 +2658,58 @@ pub async fn delete_message_handler(
     // Delete the message
     messages_col.delete_one(message_filter).await?;
 
-    // Decrement comment count in channel fixture
+    // Decrement the fixture's message count without allowing it to go negative.
     if let Some(fixture_id) = &message.fixture_id {
         channel_fixtures_col
             .update_one(
                 doc! {
                     "channel_id": &message.channel_id,
                     "fixture_id": fixture_id,
+                    "comment_count": { "$gt": 0 },
                 },
                 doc! { "$inc": { "comment_count": -1 } },
             )
             .await?;
+    }
+
+    // Notify every client in the exact channel/fixture room so deleted
+    // messages disappear without waiting for a history refresh.
+    let room_key = match message.fixture_id.as_deref().filter(|value| !value.is_empty()) {
+        Some(fixture_id) => format!("{}_{}", message.channel_id, fixture_id),
+        None => format!("{}_overall", message.channel_id),
+    };
+    let broadcaster = state.get_or_create_broadcaster(&room_key);
+    let deleted_event = serde_json::json!({
+        "type": "chat.message.deleted",
+        "payload": {
+            "channelId": message.channel_id,
+            "fixtureId": message.fixture_id,
+            "messageId": message_id,
+        },
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    });
+    if let Ok(serialized) = serde_json::to_string(&deleted_event) {
+        let _ = broadcaster.send(serialized);
+    }
+
+    if let Some(fixture_id) = &message.fixture_id {
+        if let Some(fixture) = channel_fixtures_col.find_one(doc! {
+            "channel_id": &message.channel_id,
+            "fixture_id": fixture_id,
+        }).await? {
+            let count_event = serde_json::json!({
+                "type": "comment.count",
+                "payload": {
+                    "channel_id": message.channel_id,
+                    "fixture_id": fixture_id,
+                    "count": fixture.comment_count,
+                },
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            if let Ok(serialized) = serde_json::to_string(&count_event) {
+                let _ = broadcaster.send(serialized);
+            }
+        }
     }
 
     Ok(Json(json!({
