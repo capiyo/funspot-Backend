@@ -2633,9 +2633,18 @@ pub async fn delete_message_handler(
     let messages_col = state.db.collection::<Message>("messages");
     let channel_fixtures_col = state.db.collection::<ChannelFixture>("channel_fixtures");
 
-    // Find the message
+    // History exposes Mongo's ObjectId as `id`; older callers may send
+    // the UUID in `message_id`. Accept either identity, scoped to this channel.
+    let mut identities = vec![doc! { "message_id": &message_id }];
+    if let Ok(object_id) = ObjectId::parse_str(&message_id) {
+        identities.push(doc! { "_id": object_id });
+    }
+    let message_filter = doc! {
+        "channel_id": &_channel_id,
+        "$or": identities,
+    };
     let message = messages_col
-        .find_one(doc! { "message_id": &message_id })
+        .find_one(message_filter.clone())
         .await?
         .ok_or(AppError::DocumentNotFound)?;
 
@@ -2647,7 +2656,7 @@ pub async fn delete_message_handler(
     }
 
     // Delete the message
-    messages_col.delete_one(doc! { "_id": message.id }).await?;
+    messages_col.delete_one(message_filter).await?;
 
     // Decrement comment count in channel fixture
     if let Some(fixture_id) = &message.fixture_id {
