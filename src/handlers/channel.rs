@@ -1,10 +1,12 @@
-use crate::models::user::User;
+use crate::models::user::{Claims, User};
 use axum::{
     extract::{Path, Query, State}, // ✅ REMOVED Multipart from here
     response::IntoResponse,
     Json,
 };
-use axum_extra::extract::Multipart; // ✅ ADD THIS - this is the correct import
+use axum_extra::extract::Multipart; // multipart uploads
+use axum::http::HeaderMap;
+use jsonwebtoken::{decode, DecodingKey, Validation};
 use bson::{doc, oid::ObjectId, Bson, DateTime as BsonDateTime};
 use futures_util::StreamExt;
 use mongodb::Collection;
